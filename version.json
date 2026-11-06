@@ -1,6 +1,6 @@
 {
   "versionCode": 6,
   "versionName": "1.5.0-PRO-MAX",
-  "apkUrl": "https://github.com/evandroomiix/miix-agendador-wp/releases/download/v1.5.0/MiixAgendadorWP_v1.5.0_PRO_MAX.apk",
+  "apkUrl": "https://github.com/evandroomiix/miix-agendador-wp/releases/download/v1.4.0/MiixAgendadorWP.apk",
   "changelog": "• Correção definitiva no seletor de fotos e vídeos (Google Photos)\n• Tela detalhada de agendamento ao tocar no card (destinatários, mensagem, mídia, status, dia da semana)\n• Ações no detalhe: Lápis para editar, Lixeira para excluir e 3 pontinhos (Enviar agora, Duplicar, Logs, Pausa)\n• Otimizações de acessibilidade e captura de conversas"
 }
