@@ -30,6 +30,18 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      - name: Gerar Chave de Release Oficial
+        run: |
+          keytool -genkeypair -v \
+            -keystore release.jks \
+            -alias miix \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass miixagendador123 \
+            -keypass miixagendador123 \
+            -dname "CN=Miix Agendador WP, OU=Mobile, O=Miix, L=Sao Paulo, ST=SP, C=BR"
+
       - name: Compilar APK (Release)
         run: gradle assembleRelease --no-daemon --stacktrace
 
