@@ -70,47 +70,57 @@ class ExecutionForegroundService : Service() {
                 return@launch
             }
 
-            dao.updateStatus(message.id, MessageStatus.SENDING, "Processando fila de contatos...")
+            dao.updateStatus(message.id, MessageStatus.PENDING, "Processando fila de envio...")
 
             try {
                 val recipients = parseRecipients(message.recipientsJson)
-                val total = recipients.size
+                val total = recipients.size.coerceAtLeast(1)
                 var successCount = 0
 
-                val pkgTarget = if (message.whatsAppType == WhatsAppType.WHATSAPP_BUSINESS) {
-                    "com.whatsapp.w4b"
+                val pkgTarget = resolvePackageTarget(message.whatsAppType)
+
+                // Caso seja postagem de STATUS / STORIES
+                if (message.scheduleType == ScheduleType.STATUS) {
+                    updateNotification("Postando no Status do WhatsApp...")
+                    val posted = postToStatus(message, pkgTarget)
+                    if (posted) successCount++
                 } else {
-                    "com.whatsapp"
-                }
+                    for (i in recipients.indices) {
+                        val contact = recipients[i]
+                        val phone = contact.first
+                        val name = contact.second
 
-                for (i in 0 until total) {
-                    val contact = recipients[i]
-                    val phone = contact.first
-                    val name = contact.second
+                        updateNotification("Enviando ${i + 1} de $total para $name...")
 
-                    updateNotification("Enviando ${i + 1} de $total para $name...")
+                        // Personalizar variáveis da mensagem
+                        var textPersonalizado = message.text
+                            .replace("{nome}", name)
+                            .replace("{name}", name)
+                            .replace("{telefone}", phone)
+                            .replace("{saudacao}", getSaudacaoAtual())
 
-                    // Personalizar variáveis da mensagem
-                    val textPersonalizado = message.text
-                        .replace("{nome}", name)
-                        .replace("{name}", name)
-                        .replace("{telefone}", phone)
+                        // Se for enquete, formata o texto com as opções
+                        if (message.scheduleType == ScheduleType.POLL && message.pollQuestion.isNotBlank()) {
+                            textPersonalizado = formatPollText(message.pollQuestion, message.pollOptionsJson) + 
+                                (if (textPersonalizado.isNotBlank()) "\n\n$textPersonalizado" else "")
+                        }
 
-                    val sent = sendSingleMessage(phone, textPersonalizado, pkgTarget)
-                    if (sent) {
-                        successCount++
-                    }
+                        val sent = sendSingleMessage(phone, textPersonalizado, pkgTarget, message.attachmentUri, message.attachmentType)
+                        if (sent) {
+                            successCount++
+                        }
 
-                    // Se ainda houver contatos na fila, aguarda o intervalo anti-ban
-                    if (i < total - 1) {
-                        val delaySecs = message.delayBetweenContactsSeconds.coerceAtLeast(3)
-                        delay(delaySecs * 1000L)
+                        // Intervalo anti-ban entre contatos
+                        if (i < recipients.size - 1) {
+                            val delaySecs = message.delayBetweenContactsSeconds.coerceAtLeast(3)
+                            delay(delaySecs * 1000L)
+                        }
                     }
                 }
 
                 // Finalização
-                val logFinal = "Enviados: $successCount de $total com sucesso."
-                dao.updateStatus(message.id, MessageStatus.SENT, logFinal)
+                val logFinal = "Sucesso: $successCount de $total envios concluídos com êxito."
+                dao.updateStatus(message.id, MessageStatus.DONE, logFinal)
 
                 // Repetição se configurada
                 if (message.repeatMode != RepeatMode.NONE) {
@@ -129,7 +139,34 @@ class ExecutionForegroundService : Service() {
         }
     }
 
-    private suspend fun sendSingleMessage(phone: String, text: String, pkgTarget: String): Boolean {
+    private fun resolvePackageTarget(type: WhatsAppType): String {
+        return when (type) {
+            WhatsAppType.WHATSAPP_NORMAL -> "com.whatsapp"
+            WhatsAppType.WHATSAPP_BUSINESS -> "com.whatsapp.w4b"
+            WhatsAppType.WHATSAPP_MOD -> {
+                // Seleciona o primeiro mod instalado
+                val mods = listOf("com.gbwhatsapp", "com.fmwhatsapp", "com.yowhatsapp", "com.aero")
+                mods.firstOrNull { PlatformHelper.isAppInstalled(this, it) } ?: "com.whatsapp"
+            }
+            WhatsAppType.INSTAGRAM -> {
+                val instas = listOf("com.instagram.android", "com.instander.android", "com.honista.app", "com.aeroinsta.android")
+                instas.firstOrNull { PlatformHelper.isAppInstalled(this, it) } ?: "com.instagram.android"
+            }
+            WhatsAppType.FACEBOOK -> {
+                val faces = listOf("com.facebook.katana", "com.facebook.lite")
+                faces.firstOrNull { PlatformHelper.isAppInstalled(this, it) } ?: "com.facebook.katana"
+            }
+            WhatsAppType.META_BUSINESS -> "com.facebook.pages.app"
+        }
+    }
+
+    private suspend fun sendSingleMessage(
+        phone: String,
+        text: String,
+        pkgTarget: String,
+        attachmentUriStr: String?,
+        attachmentType: AttachmentType
+    ): Boolean {
         return withContext(Dispatchers.Main) {
             val completer = CompletableDeferred<Boolean>()
 
@@ -140,34 +177,113 @@ class ExecutionForegroundService : Service() {
                 }
             }
 
-            // Normaliza telefone (apenas números)
             val cleanPhone = phone.replace(Regex("[^0-9]"), "")
-            val encodedText = URLEncoder.encode(text, "UTF-8")
-            val uri = Uri.parse("https://api.whatsapp.com/send?phone=$cleanPhone&text=$encodedText")
-
-            val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                setPackage(pkgTarget)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            
+            val intent = if (!attachmentUriStr.isNullOrBlank() && attachmentType != AttachmentType.NONE) {
+                // Envio com Anexo (Imagem/Vídeo/Documento/Áudio)
+                val fileUri = Uri.parse(attachmentUriStr)
+                Intent(Intent.ACTION_SEND).apply {
+                    setPackage(pkgTarget)
+                    val mime = when (attachmentType) {
+                        AttachmentType.IMAGE_VIDEO -> "image/*"
+                        AttachmentType.AUDIO, AttachmentType.VOICE_NOTE -> "audio/*"
+                        AttachmentType.DOCUMENT -> "application/*"
+                        else -> "*/*"
+                    }
+                    type = mime
+                    putExtra(Intent.EXTRA_STREAM, fileUri)
+                    if (text.isNotBlank()) {
+                        putExtra(Intent.EXTRA_TEXT, text)
+                    }
+                    if (cleanPhone.isNotBlank()) {
+                        putExtra("jid", "$cleanPhone@s.whatsapp.net")
+                    }
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+            } else {
+                // Envio de Texto via Deep Link Oficial
+                val encodedText = URLEncoder.encode(text, "UTF-8")
+                val uri = Uri.parse("https://api.whatsapp.com/send?phone=$cleanPhone&text=$encodedText")
+                Intent(Intent.ACTION_VIEW, uri).apply {
+                    setPackage(pkgTarget)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
             }
 
             try {
                 startActivity(intent)
             } catch (e: Exception) {
-                Log.e(TAG, "Não foi possível abrir o WhatsApp ($pkgTarget): ${e.message}")
+                Log.e(TAG, "Não foi possível abrir o app alvo ($pkgTarget): ${e.message}")
                 WhatsAppAccessibilityService.isAutomating = false
                 return@withContext false
             }
 
-            // Aguarda até 10 segundos pela confirmação do clique pelo serviço de acessibilidade
+            // Aguarda até 12 segundos pela confirmação do clique pelo serviço de acessibilidade
             try {
-                withTimeout(10000L) {
+                withTimeout(12000L) {
                     completer.await()
                 }
             } catch (te: TimeoutCancellationException) {
-                Log.w(TAG, "Timeout aguardando envio do WhatsApp para $phone")
+                Log.w(TAG, "Timeout aguardando envio para $phone")
                 WhatsAppAccessibilityService.isAutomating = false
                 false
             }
+        }
+    }
+
+    private suspend fun postToStatus(message: ScheduledMessage, pkgTarget: String): Boolean {
+        return withContext(Dispatchers.Main) {
+            val completer = CompletableDeferred<Boolean>()
+            WhatsAppAccessibilityService.isAutomating = true
+            WhatsAppAccessibilityService.onMessageSentListener = {
+                if (!completer.isCompleted) completer.complete(true)
+            }
+
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                setPackage(pkgTarget)
+                if (!message.attachmentUri.isNullOrBlank()) {
+                    type = "image/*"
+                    putExtra(Intent.EXTRA_STREAM, Uri.parse(message.attachmentUri))
+                } else {
+                    type = "text/plain"
+                }
+                putExtra(Intent.EXTRA_TEXT, message.text)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            try {
+                startActivity(intent)
+                withTimeout(15000L) { completer.await() }
+            } catch (e: Exception) {
+                false
+            }
+        }
+    }
+
+    private fun formatPollText(question: String, optionsJson: String): String {
+        val sb = StringBuilder("📊 *$question*\n")
+        try {
+            val arr = JSONArray(optionsJson)
+            val emojis = listOf("1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟")
+            for (i in 0 until arr.length()) {
+                val opt = arr.optString(i, "")
+                if (opt.isNotBlank()) {
+                    val emoji = if (i < emojis.size) emojis[i] else "🔘"
+                    sb.append("\n$emoji $opt")
+                }
+            }
+        } catch (e: Exception) {
+            sb.append("\n$optionsJson")
+        }
+        return sb.toString()
+    }
+
+    private fun getSaudacaoAtual(): String {
+        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        return when (hour) {
+            in 5..11 -> "Bom dia"
+            in 12..17 -> "Boa tarde"
+            else -> "Boa noite"
         }
     }
 
@@ -184,7 +300,6 @@ class ExecutionForegroundService : Service() {
                 }
             }
         } catch (e: Exception) {
-            // Formato simples de fallback caso seja apenas texto separado por vírgula
             json.split(",").forEach {
                 val p = it.trim()
                 if (p.isNotBlank()) list.add(Pair(p, p))
@@ -200,7 +315,7 @@ class ExecutionForegroundService : Service() {
                 PowerManager.PARTIAL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
                 "MiixAgendador:ExecutionWakeLock"
             )
-            wakeLock?.acquire(10 * 60 * 1000L) // 10 minutos máximo
+            wakeLock?.acquire(10 * 60 * 1000L)
         } catch (e: Exception) {
             Log.w(TAG, "Falha ao obter WakeLock: ${e.message}")
         }
@@ -208,9 +323,7 @@ class ExecutionForegroundService : Service() {
 
     private fun releaseWakeLock() {
         try {
-            if (wakeLock?.isHeld == true) {
-                wakeLock?.release()
-            }
+            if (wakeLock?.isHeld == true) wakeLock?.release()
         } catch (e: Exception) {
             Log.w(TAG, "Falha ao liberar WakeLock: ${e.message}")
         }

@@ -8,17 +8,55 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     
-    <!-- Permissões de Segundo Plano e Tela -->
+    <!-- Permissões de Segundo Plano, Notificações e Sobreposição -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Reconhecimento do WhatsApp e WhatsApp Business -->
+    <!-- Acesso a Contatos do Telefone -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+
+    <!-- Acesso a Mídia e Anexos (Imagens, Vídeos, Áudios e Documentos) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+
+    <!-- Gravação de Áudio / Mensagem de Voz -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Sincronização de Calendário (Google Agenda / Calendário Android) -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+
+    <!-- Reconhecimento de WhatsApp, WhatsApp Business, Mods, Instagram, Facebook e Meta Business -->
     <queries>
+        <!-- WhatsApp Oficial e Business -->
         <package android:name="com.whatsapp" />
         <package android:name="com.whatsapp.w4b" />
+        <!-- WhatsApp Mods Populares -->
+        <package android:name="com.gbwhatsapp" />
+        <package android:name="com.fmwhatsapp" />
+        <package android:name="com.yowhatsapp" />
+        <package android:name="com.aero" />
+        <!-- Instagram Oficial e Mods -->
+        <package android:name="com.instagram.android" />
+        <package android:name="com.instander.android" />
+        <package android:name="com.honista.app" />
+        <package android:name="com.aeroinsta.android" />
+        <!-- Facebook e Meta Business Suite -->
+        <package android:name="com.facebook.katana" />
+        <package android:name="com.facebook.lite" />
+        <package android:name="com.facebook.pages.app" />
+        <!-- Aplicativos de Contatos e Calendário -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <data android:scheme="content" />
+        </intent>
     </queries>
 
     <application
@@ -42,7 +80,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Serviço de Acessibilidade para digitação e envio automático no WhatsApp -->
+        <!-- Serviço de Acessibilidade para digitação e automação -->
         <service
             android:name=".service.WhatsAppAccessibilityService"
             android:exported="true"
@@ -59,9 +97,11 @@
         <!-- Receiver para disparar na hora agendada -->
         <receiver
             android:name=".service.ScheduledMessageReceiver"
-            android:exported="false">
+            android:exported="true">
             <intent-filter>
                 <action android:name="com.miix.agendadorwp.ACTION_SEND_SCHEDULED" />
+                <action android:name="com.miix.agendadorwp.ACTION_CONFIRM_SEND" />
+                <action android:name="com.miix.agendadorwp.ACTION_SNOOZE_SEND" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
@@ -71,6 +111,17 @@
             android:name=".service.ExecutionForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- FileProvider para compartilhar imagens/vídeos/áudios com segurança -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.miix.agendadorwp.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 

@@ -72,6 +72,8 @@ object SchedulerManager {
         Log.d(TAG, "Agendamento $messageId cancelado")
     }
 
+    fun cancelMessage(context: Context, messageId: Long) = cancelSchedule(context, messageId)
+
     suspend fun rescheduleAllPending(context: Context) {
         val dao = AppDatabase.getInstance(context).scheduledMessageDao()
         val now = System.currentTimeMillis()

@@ -26,12 +26,12 @@ fun HistoryScreen(database: AppDatabase) {
     val allMessages by database.scheduledMessageDao().getAllMessagesFlow().collectAsState(initial = emptyList())
     val historyMessages = allMessages.filter { it.status != MessageStatus.PENDING }
     val scope = rememberCoroutineScope()
-    val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale("pt", "BR"))
+    val sdf = remember { SimpleDateFormat("dd/MM/yyyy HH:mm", Locale("pt", "BR")) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Histórico de Envios", fontWeight = FontWeight.Bold, color = TextPrimary) },
+                title = { Text("Histórico Geral", fontWeight = FontWeight.Bold, color = TextPrimary) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkSurface)
             )
         },
@@ -60,18 +60,18 @@ fun HistoryScreen(database: AppDatabase) {
             ) {
                 items(historyMessages, key = { it.id }) { msg ->
                     val statusColor = when (msg.status) {
-                        MessageStatus.SENT -> GreenPrimary
+                        MessageStatus.DONE -> GreenPrimary
                         MessageStatus.FAILED -> AccentRed
-                        MessageStatus.CANCELLED -> AccentOrange
-                        MessageStatus.SENDING -> AccentBlue
+                        MessageStatus.DRAFT -> AccentOrange
+                        MessageStatus.DELETED -> TextSecondary
                         else -> TextSecondary
                     }
 
                     val statusLabel = when (msg.status) {
-                        MessageStatus.SENT -> "ENVIADO"
+                        MessageStatus.DONE -> "CONCLUÍDO"
                         MessageStatus.FAILED -> "FALHOU"
-                        MessageStatus.CANCELLED -> "CANCELADO"
-                        MessageStatus.SENDING -> "ENVIANDO..."
+                        MessageStatus.DRAFT -> "RASCUNHO"
+                        MessageStatus.DELETED -> "EXCLUÍDO"
                         else -> "PENDENTE"
                     }
 
@@ -99,21 +99,26 @@ fun HistoryScreen(database: AppDatabase) {
                                     Text(
                                         statusLabel,
                                         color = statusColor,
-                                        fontWeight = FontWeight.Bold,
                                         fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                     )
                                 }
                             }
 
                             Spacer(modifier = Modifier.height(6.dp))
-                            Text(msg.text, color = TextSecondary, fontSize = 13.sp, maxLines = 2)
+                            Text(
+                                msg.text.ifBlank { if (msg.scheduleType == ScheduleType.POLL) msg.pollQuestion else "(Sem texto)" },
+                                color = TextSecondary,
+                                fontSize = 13.sp,
+                                maxLines = 2
+                            )
 
                             if (msg.lastExecutionLog.isNotBlank()) {
-                                Spacer(modifier = Modifier.height(6.dp))
+                                Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    "Log: ${msg.lastExecutionLog}",
-                                    color = TextSecondary.copy(alpha = 0.8f),
+                                    msg.lastExecutionLog,
+                                    color = if (msg.status == MessageStatus.FAILED) AccentRed else GreenPrimary,
                                     fontSize = 11.sp
                                 )
                             }
@@ -125,16 +130,19 @@ fun HistoryScreen(database: AppDatabase) {
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    sdf.format(Date(msg.scheduledTimeMillis)),
+                                    "Data: ${sdf.format(Date(msg.scheduledTimeMillis))}",
                                     color = TextSecondary,
-                                    fontSize = 11.sp
+                                    fontSize = 12.sp
                                 )
-                                IconButton(onClick = {
-                                    scope.launch {
-                                        database.scheduledMessageDao().deleteMessage(msg)
-                                    }
-                                }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Excluir", tint = AccentRed)
+                                IconButton(
+                                    onClick = {
+                                        scope.launch {
+                                            database.scheduledMessageDao().deleteMessage(msg)
+                                        }
+                                    },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Remover", tint = TextSecondary, modifier = Modifier.size(16.dp))
                                 }
                             }
                         }
