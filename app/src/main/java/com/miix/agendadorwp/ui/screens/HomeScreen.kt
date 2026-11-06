@@ -1,10 +1,13 @@
 package com.miix.agendadorwp.ui.screens
 
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
+import android.text.TextUtils
+import android.view.accessibility.AccessibilityManager
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,9 +23,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.miix.agendadorwp.data.*
 import com.miix.agendadorwp.scheduler.SchedulerManager
 import com.miix.agendadorwp.service.CalendarSyncHelper
@@ -42,8 +48,9 @@ fun HomeScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-    // 5 Abas solicitadas: Pendentes, Feito, Falhado, Rascunhos, Excluído
+    // 5 Abas: Pendentes, Feito, Falhado, Rascunhos, Excluído
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     val tabTitles = listOf("Pendentes", "Feito", "Falhado", "Rascunhos", "Excluído")
 
@@ -53,8 +60,22 @@ fun HomeScreen(
     val draftMessages by database.scheduledMessageDao().getDraftMessagesFlow().collectAsState(initial = emptyList())
     val deletedMessages by database.scheduledMessageDao().getDeletedMessagesFlow().collectAsState(initial = emptyList())
 
-    var isAccessibilityEnabled by remember { mutableStateOf(WhatsAppAccessibilityService.isServiceRunning) }
+    var isAccessibilityEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled(context)) }
     var isBatteryOptIgnored by remember { mutableStateOf(checkBatteryOptimization(context)) }
+
+    // Atualização em tempo real ao voltar das Configurações do Android
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isAccessibilityEnabled = isAccessibilityServiceEnabled(context)
+                isBatteryOptIgnored = checkBatteryOptimization(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -65,7 +86,7 @@ fun HomeScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text("Miix Agendador WP", fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 18.sp)
-                            Text("Versão PRO MAX • Sem Limites", fontSize = 11.sp, color = GreenPrimary)
+                            Text("Versão PRO MAX v1.2 • Sem Limites", fontSize = 11.sp, color = GreenPrimary)
                         }
                     }
                 },
@@ -89,7 +110,7 @@ fun HomeScreen(
                             }
                             Toast.makeText(
                                 context,
-                                if (syncedCount > 0) "✅ $syncedCount eventos sincronizados com a Google Agenda!" else "📅 Calendário atualizado (permissão necessária)",
+                                if (syncedCount > 0) "✅ $syncedCount eventos sincronizados com a Google Agenda!" else "📅 Calendário atualizado!",
                                 Toast.LENGTH_SHORT
                             ).show()
                         }
@@ -166,35 +187,105 @@ fun HomeScreen(
             ) {
                 item { Spacer(modifier = Modifier.height(8.dp)) }
 
-                // Alertas de Permissão (Acessibilidade e Bateria)
+                // ⚠️ GUIA PASSO A PASSO: LIBERAÇÃO RESTRIÇÕES + ACESSIBILIDADE
                 if (!isAccessibilityEnabled && selectedTabIndex == 0) {
                     item {
                         Card(
                             colors = CardDefaults.cardColors(containerColor = AccentOrange.copy(alpha = 0.15f)),
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(14.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Column(modifier = Modifier.padding(14.dp)) {
+                            Column(modifier = Modifier.padding(16.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Warning, contentDescription = null, tint = AccentOrange)
+                                    Icon(Icons.Default.Security, contentDescription = null, tint = AccentOrange)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Acessibilidade Desativada", fontWeight = FontWeight.Bold, color = AccentOrange, fontSize = 15.sp)
+                                    Text(
+                                        "Ativação em 2 Passos (Android 13/14+)",
+                                        fontWeight = FontWeight.Bold,
+                                        color = AccentOrange,
+                                        fontSize = 15.sp
+                                    )
                                 }
-                                Spacer(modifier = Modifier.height(6.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "Para envio automático sem toque na tela, ative a acessibilidade do Miix Agendador.",
+                                    "Para que o app envie no WhatsApp sem você tocar na tela, siga os 2 passos rápidos abaixo:",
                                     color = TextPrimary,
                                     fontSize = 13.sp
                                 )
-                                Spacer(modifier = Modifier.height(10.dp))
-                                Button(
-                                    onClick = {
-                                        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                                        context.startActivity(intent)
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = AccentOrange)
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                // PASSO 1: ABRIR DETALHES DO APP (3 PONTINHOS)
+                                Surface(
+                                    color = DarkCard,
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text("Ativar Acessibilidade", color = DarkBackground, fontWeight = FontWeight.Bold)
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text("Passo 1: Liberar Configurações Restritas", fontWeight = FontWeight.Bold, color = GreenPrimary, fontSize = 13.sp)
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            "Toque no botão abaixo. Na tela que abrir, toque nos 3 pontinhos (⋮) no canto superior direito e selecione 'Permitir configurações restritas'.",
+                                            color = TextSecondary,
+                                            fontSize = 12.sp
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Button(
+                                            onClick = {
+                                                try {
+                                                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                                        data = Uri.parse("package:${context.packageName}")
+                                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                                    }
+                                                    context.startActivity(intent)
+                                                } catch (e: Exception) {
+                                                    Toast.makeText(context, "Abra Configurações > Aplicativos > Miix Agendador", Toast.LENGTH_LONG).show()
+                                                }
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Icon(Icons.Default.MoreVert, contentDescription = null, tint = DarkBackground, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("1. Abrir Detalhes (Liberar 3 Pontinhos)", color = DarkBackground, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // PASSO 2: ATIVAR ACESSIBILIDADE
+                                Surface(
+                                    color = DarkCard,
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text("Passo 2: Ligar a Acessibilidade", fontWeight = FontWeight.Bold, color = AccentBlue, fontSize = 13.sp)
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            "Após liberar o Passo 1, toque no botão abaixo, procure 'Miix Agendador WP' e ative a chavinha.",
+                                            color = TextSecondary,
+                                            fontSize = 12.sp
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Button(
+                                            onClick = {
+                                                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                                }
+                                                context.startActivity(intent)
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Icon(Icons.Default.Accessibility, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("2. Ativar Serviço de Acessibilidade", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -335,7 +426,7 @@ fun MessageItemCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
-            // Linha do Título e Badges da Plataforma / Tipo
+            // Linha do Título e Badges da Plataforma
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -349,7 +440,6 @@ fun MessageItemCard(
                     modifier = Modifier.weight(1f)
                 )
 
-                // Badges de Plataforma
                 Surface(
                     color = when (message.whatsAppType) {
                         WhatsAppType.WHATSAPP_BUSINESS -> GreenSecondary
@@ -380,7 +470,7 @@ fun MessageItemCard(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // Badges secundárias: Tipo de Agendamento + Anexo
+            // Badges secundárias
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (message.scheduleType != ScheduleType.CONTACT_GROUP) {
                     Surface(color = DarkSurface, shape = RoundedCornerShape(4.dp)) {
@@ -506,6 +596,27 @@ fun MessageItemCard(
                 }
             }
         }
+    }
+}
+
+fun isAccessibilityServiceEnabled(context: Context): Boolean {
+    if (WhatsAppAccessibilityService.isServiceRunning) return true
+    return try {
+        val enabledServices = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        val colonSplitter = TextUtils.SimpleStringSplitter(':')
+        colonSplitter.setString(enabledServices)
+        while (colonSplitter.hasNext()) {
+            val componentName = colonSplitter.next()
+            if (componentName.contains(context.packageName, ignoreCase = true)) {
+                return true
+            }
+        }
+        false
+    } catch (e: Exception) {
+        WhatsAppAccessibilityService.isServiceRunning
     }
 }
 
