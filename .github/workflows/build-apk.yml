@@ -25,22 +25,20 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Configurar Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Configurar Gradle
+      - name: Configurar Gradle 8.7
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.7'
 
       - name: Compilar APK (Release)
-        run: gradle assembleRelease --no-daemon
+        run: gradle assembleRelease --no-daemon --stacktrace
 
-      - name: Renomear APK
+      - name: Localizar e Renomear APK
         run: |
           mkdir -p output_apk
-          cp app/build/outputs/apk/release/app-release.apk output_apk/MiixAgendadorWP.apk
-          echo "APK gerado com sucesso em output_apk/MiixAgendadorWP.apk"
+          find app/build/outputs/apk -name "*.apk" -exec cp {} output_apk/MiixAgendadorWP.apk \;
+          echo "Verificando APK gerado:"
+          ls -lh output_apk/
 
       - name: Upload do APK como Artefato
         uses: actions/upload-artifact@v4
@@ -49,7 +47,7 @@ jobs:
           path: output_apk/MiixAgendadorWP.apk
           retention-days: 30
 
-      - name: Criar Release no GitHub (Opcional se tag ou manual)
+      - name: Criar Release no GitHub (se Tag ou Execução Manual)
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
