@@ -12,8 +12,8 @@ android {
         applicationId = "com.miix.agendadorwp"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.2.0-PRO-MAX"
+        versionCode = 4
+        versionName = "1.3.0-PRO-MAX"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

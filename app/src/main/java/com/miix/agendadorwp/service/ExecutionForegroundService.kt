@@ -143,15 +143,9 @@ class ExecutionForegroundService : Service() {
         return when (type) {
             WhatsAppType.WHATSAPP_NORMAL -> "com.whatsapp"
             WhatsAppType.WHATSAPP_BUSINESS -> "com.whatsapp.w4b"
-            WhatsAppType.WHATSAPP_MOD -> {
-                // Seleciona o primeiro mod instalado
-                val mods = listOf("com.gbwhatsapp", "com.fmwhatsapp", "com.yowhatsapp", "com.aero")
-                mods.firstOrNull { PlatformHelper.isAppInstalled(this, it) } ?: "com.whatsapp"
-            }
-            WhatsAppType.INSTAGRAM -> {
-                val instas = listOf("com.instagram.android", "com.instander.android", "com.honista.app", "com.aeroinsta.android")
-                instas.firstOrNull { PlatformHelper.isAppInstalled(this, it) } ?: "com.instagram.android"
-            }
+            WhatsAppType.WHATSAPP_MOD -> PlatformHelper.getInstalledWhatsAppModPackage(this)
+            WhatsAppType.INSTAGRAM -> "com.instagram.android"
+            WhatsAppType.INSTAGRAM_MOD -> PlatformHelper.getInstalledInstagramPackage(this)
             WhatsAppType.FACEBOOK -> {
                 val faces = listOf("com.facebook.katana", "com.facebook.lite")
                 faces.firstOrNull { PlatformHelper.isAppInstalled(this, it) } ?: "com.facebook.katana"

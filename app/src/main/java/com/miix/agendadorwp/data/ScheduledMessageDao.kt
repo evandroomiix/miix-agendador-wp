@@ -8,7 +8,7 @@ interface ScheduledMessageDao {
     @Query("SELECT * FROM scheduled_messages ORDER BY scheduledTimeMillis ASC")
     fun getAllMessagesFlow(): Flow<List<ScheduledMessage>>
 
-    @Query("SELECT * FROM scheduled_messages WHERE status = 'PENDING' ORDER BY scheduledTimeMillis ASC")
+    @Query("SELECT * FROM scheduled_messages WHERE status = 'PENDING' OR status = 'PAUSED' ORDER BY scheduledTimeMillis ASC")
     fun getPendingMessagesFlow(): Flow<List<ScheduledMessage>>
 
     @Query("SELECT * FROM scheduled_messages WHERE status = 'DONE' ORDER BY scheduledTimeMillis DESC")
@@ -49,6 +49,14 @@ interface ScheduledMessageDao {
     // Restaurar da lixeira para Pendente
     @Query("UPDATE scheduled_messages SET status = 'PENDING' WHERE id = :id")
     suspend fun restoreMessage(id: Long)
+
+    // Pausar agendamento
+    @Query("UPDATE scheduled_messages SET status = 'PAUSED' WHERE id = :id")
+    suspend fun pauseMessage(id: Long)
+
+    // Retomar agendamento
+    @Query("UPDATE scheduled_messages SET status = 'PENDING' WHERE id = :id")
+    suspend fun resumeMessage(id: Long)
 
     // Esvaziar lixeira permanentemente
     @Query("DELETE FROM scheduled_messages WHERE status = 'DELETED'")

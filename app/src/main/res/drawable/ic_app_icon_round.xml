@@ -1,0 +1,38 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Círculo Completo Escuro -->
+    <path
+        android:pathData="M54,6 A48,48 0 1,0 54,102 A48,48 0 1,0 54,6 Z"
+        android:fillColor="#0D141C" />
+
+    <!-- Círculo de Destaque Verde WhatsApp -->
+    <path
+        android:pathData="M54,18 A36,36 0 1,0 54,90 A36,36 0 1,0 54,18 Z"
+        android:fillColor="#128C7E" />
+
+    <!-- Balão de Mensagem / Base Miix -->
+    <path
+        android:pathData="M54,24 C38.54,24 26,35.64 26,50 C26,55.28 27.65,60.2 30.5,64.33 L28,78 L42.12,74.33 C45.74,76.03 49.75,77 54,77 C69.46,77 82,65.36 82,50 C82,34.64 69.46,24 54,24 Z"
+        android:fillColor="#25D366" />
+
+    <!-- Letra M estilizada -->
+    <path
+        android:pathData="M38,40 L44,40 L54,54 L64,40 L70,40 L70,62 L64,62 L64,48 L56,59 L52,59 L44,48 L44,62 L38,62 Z"
+        android:fillColor="#0B141A" />
+
+    <!-- Timer / Relógio de Envio -->
+    <path
+        android:pathData="M78,74 A14,14 0 1,0 78,102 A14,14 0 1,0 78,74 Z"
+        android:fillColor="#25D366" />
+    <path
+        android:pathData="M78,77 A11,11 0 1,0 78,99 A11,11 0 1,0 78,77 Z"
+        android:fillColor="#0D141C" />
+    <path
+        android:pathData="M77,81 L77,88 L83,92"
+        android:strokeColor="#25D366"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round" />
+</vector>

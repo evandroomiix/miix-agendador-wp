@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.core.content.ContextCompat
 import com.miix.agendadorwp.data.AppDatabase
+import com.miix.agendadorwp.data.WhatsAppType
 import com.miix.agendadorwp.ui.screens.*
 import com.miix.agendadorwp.ui.theme.*
 
@@ -72,6 +73,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainScreen(database: AppDatabase) {
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Home) }
+    var selectedPlatformForNew by remember { mutableStateOf(WhatsAppType.WHATSAPP_NORMAL) }
+    var editingMessageId by remember { mutableStateOf<Long?>(null) }
 
     Scaffold(
         bottomBar = {
@@ -84,7 +87,12 @@ fun MainScreen(database: AppDatabase) {
                     val selected = currentScreen == screen
                     NavigationBarItem(
                         selected = selected,
-                        onClick = { currentScreen = screen },
+                        onClick = {
+                            if (screen == Screen.New) {
+                                editingMessageId = null
+                            }
+                            currentScreen = screen
+                        },
                         icon = { Icon(screen.icon, contentDescription = screen.title) },
                         label = { Text(screen.title) },
                         colors = NavigationBarItemDefaults.colors(
@@ -104,11 +112,24 @@ fun MainScreen(database: AppDatabase) {
             when (currentScreen) {
                 is Screen.Home -> HomeScreen(
                     database = database,
-                    onNavigateToNew = { currentScreen = Screen.New }
+                    onNavigateToNew = { chosenPlatform ->
+                        selectedPlatformForNew = chosenPlatform
+                        editingMessageId = null
+                        currentScreen = Screen.New
+                    },
+                    onEditMessage = { messageId ->
+                        editingMessageId = messageId
+                        currentScreen = Screen.New
+                    }
                 )
                 is Screen.New -> NewScheduleScreen(
                     database = database,
-                    onSuccess = { currentScreen = Screen.Home }
+                    initialPlatform = selectedPlatformForNew,
+                    editingMessageId = editingMessageId,
+                    onSuccess = {
+                        editingMessageId = null
+                        currentScreen = Screen.Home
+                    }
                 )
                 is Screen.History -> HistoryScreen(database = database)
                 is Screen.Settings -> SettingsScreen()

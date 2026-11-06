@@ -1,13 +1,11 @@
 package com.miix.agendadorwp.ui.screens
 
-import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
 import android.text.TextUtils
-import android.view.accessibility.AccessibilityManager
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -33,6 +31,7 @@ import com.miix.agendadorwp.data.*
 import com.miix.agendadorwp.scheduler.SchedulerManager
 import com.miix.agendadorwp.service.CalendarSyncHelper
 import com.miix.agendadorwp.service.ExecutionForegroundService
+import com.miix.agendadorwp.service.HolidayCalendarHelper
 import com.miix.agendadorwp.service.WhatsAppAccessibilityService
 import com.miix.agendadorwp.ui.theme.*
 import kotlinx.coroutines.launch
@@ -44,7 +43,8 @@ import java.util.*
 @Composable
 fun HomeScreen(
     database: AppDatabase,
-    onNavigateToNew: () -> Unit
+    onNavigateToNew: (WhatsAppType) -> Unit,
+    onEditMessage: (Long) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -62,6 +62,11 @@ fun HomeScreen(
 
     var isAccessibilityEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled(context)) }
     var isBatteryOptIgnored by remember { mutableStateOf(checkBatteryOptimization(context)) }
+
+    // Diálogos de Ação
+    var showPlatformSelectorDialog by remember { mutableStateOf(false) }
+    var showHolidaysDialog by remember { mutableStateOf(false) }
+    var viewingLogMessage by remember { mutableStateOf<ScheduledMessage?>(null) }
 
     // Atualização em tempo real ao voltar das Configurações do Android
     DisposableEffect(lifecycleOwner) {
@@ -91,31 +96,9 @@ fun HomeScreen(
                     }
                 },
                 actions = {
-                    // Botão Sincronizar Calendários
-                    IconButton(onClick = {
-                        scope.launch {
-                            var syncedCount = 0
-                            pendingMessages.forEach { msg ->
-                                val eventId = CalendarSyncHelper.syncEvent(
-                                    context,
-                                    msg.title,
-                                    msg.text,
-                                    msg.scheduledTimeMillis,
-                                    msg.calendarEventId
-                                )
-                                if (eventId != null) {
-                                    database.scheduledMessageDao().updateMessage(msg.copy(calendarEventId = eventId, calendarSync = true))
-                                    syncedCount++
-                                }
-                            }
-                            Toast.makeText(
-                                context,
-                                if (syncedCount > 0) "✅ $syncedCount eventos sincronizados com a Google Agenda!" else "📅 Calendário atualizado!",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                    }) {
-                        Icon(Icons.Default.DateRange, contentDescription = "Sincronizar Calendários", tint = TextPrimary)
+                    // Botão Sincronizar Calendário & Feriados Nacionais
+                    IconButton(onClick = { showHolidaysDialog = true }) {
+                        Icon(Icons.Default.Event, contentDescription = "Feriados & Calendário", tint = GreenPrimary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkSurface)
@@ -123,7 +106,7 @@ fun HomeScreen(
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
-                onClick = onNavigateToNew,
+                onClick = { showPlatformSelectorDialog = true },
                 containerColor = GreenPrimary,
                 contentColor = DarkBackground,
                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
@@ -187,7 +170,7 @@ fun HomeScreen(
             ) {
                 item { Spacer(modifier = Modifier.height(8.dp)) }
 
-                // ⚠️ GUIA PASSO A PASSO: LIBERAÇÃO RESTRIÇÕES + ACESSIBILIDADE
+                // ⚠️ GUIA PASSO A PASSO COMPLETO DE ACESSIBILIDADE E RESTRIÇÕES
                 if (!isAccessibilityEnabled && selectedTabIndex == 0) {
                     item {
                         Card(
@@ -200,7 +183,7 @@ fun HomeScreen(
                                     Icon(Icons.Default.Security, contentDescription = null, tint = AccentOrange)
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        "Ativação em 2 Passos (Android 13/14+)",
+                                        "Ativação de Automação (Android 13/14+)",
                                         fontWeight = FontWeight.Bold,
                                         color = AccentOrange,
                                         fontSize = 15.sp
@@ -208,24 +191,59 @@ fun HomeScreen(
                                 }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "Para que o app envie no WhatsApp sem você tocar na tela, siga os 2 passos rápidos abaixo:",
+                                    "No Android moderno, para que o menu dos 3 pontinhos apareça nas configurações do app, o Android exige que você toque primeiro na acessibilidade. Siga os 2 passos:",
                                     color = TextPrimary,
                                     fontSize = 13.sp
                                 )
 
                                 Spacer(modifier = Modifier.height(12.dp))
 
-                                // PASSO 1: ABRIR DETALHES DO APP (3 PONTINHOS)
+                                // PASSO 1: TOCAR NA ACESSIBILIDADE PARA O ANDROID REGISTRAR O PEDIDO
                                 Surface(
                                     color = DarkCard,
                                     shape = RoundedCornerShape(10.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Column(modifier = Modifier.padding(12.dp)) {
-                                        Text("Passo 1: Liberar Configurações Restritas", fontWeight = FontWeight.Bold, color = GreenPrimary, fontSize = 13.sp)
+                                        Text("1º Passo: Registrar Tentativa no Android", fontWeight = FontWeight.Bold, color = AccentBlue, fontSize = 13.sp)
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            "Toque no botão abaixo. Na tela que abrir, toque nos 3 pontinhos (⋮) no canto superior direito e selecione 'Permitir configurações restritas'.",
+                                            "Toque no botão abaixo, selecione 'Miix Agendador WP' e toque nele (vai dar a mensagem 'Acesso negado'). Toque em Fechar e volte aqui.",
+                                            color = TextSecondary,
+                                            fontSize = 12.sp
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Button(
+                                            onClick = {
+                                                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                                }
+                                                context.startActivity(intent)
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Icon(Icons.Default.Accessibility, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text("1. Tocar em Acessibilidade", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // PASSO 2: ABRIR DETALHES E LIBERAR NOS 3 PONTINHOS
+                                Surface(
+                                    color = DarkCard,
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Text("2º Passo: Liberar nos 3 Pontinhos", fontWeight = FontWeight.Bold, color = GreenPrimary, fontSize = 13.sp)
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            "Após o 1º passo, toque no botão abaixo. Agora os 3 pontinhos (⋮) no topo direito estarão visíveis! Toque neles e selecione 'Permitir configurações restritas'. Depois é só ligar a chave!",
                                             color = TextSecondary,
                                             fontSize = 12.sp
                                         )
@@ -248,46 +266,38 @@ fun HomeScreen(
                                         ) {
                                             Icon(Icons.Default.MoreVert, contentDescription = null, tint = DarkBackground, modifier = Modifier.size(16.dp))
                                             Spacer(modifier = Modifier.width(6.dp))
-                                            Text("1. Abrir Detalhes (Liberar 3 Pontinhos)", color = DarkBackground, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                        }
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                // PASSO 2: ATIVAR ACESSIBILIDADE
-                                Surface(
-                                    color = DarkCard,
-                                    shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
-                                        Text("Passo 2: Ligar a Acessibilidade", fontWeight = FontWeight.Bold, color = AccentBlue, fontSize = 13.sp)
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(
-                                            "Após liberar o Passo 1, toque no botão abaixo, procure 'Miix Agendador WP' e ative a chavinha.",
-                                            color = TextSecondary,
-                                            fontSize = 12.sp
-                                        )
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Button(
-                                            onClick = {
-                                                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-                                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                                                }
-                                                context.startActivity(intent)
-                                            },
-                                            colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
-                                            shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Icon(Icons.Default.Accessibility, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text("2. Ativar Serviço de Acessibilidade", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                            Text("2. Liberar nos 3 Pontinhos", color = DarkBackground, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                         }
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+
+                // Card de Atalho para Feriados & Calendário
+                item {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = DarkCard),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showHolidaysDialog = true }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = GreenPrimary, modifier = Modifier.size(24.dp))
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text("Feriados Nacionais & Campanhas", fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 14.sp)
+                                    Text("Veja datas comemorativas e crie agendamentos em 1 clique", fontSize = 11.sp, color = TextSecondary)
+                                }
+                            }
+                            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = TextSecondary)
                         }
                     }
                 }
@@ -364,6 +374,7 @@ fun HomeScreen(
                         MessageItemCard(
                             message = message,
                             tabIndex = selectedTabIndex,
+                            onEdit = { onEditMessage(message.id) },
                             onSoftDelete = {
                                 scope.launch {
                                     database.scheduledMessageDao().softDelete(message.id)
@@ -387,6 +398,35 @@ fun HomeScreen(
                             onSendNow = {
                                 ExecutionForegroundService.startExecution(context, message.id)
                                 Toast.makeText(context, "Iniciando envio agora...", Toast.LENGTH_SHORT).show()
+                            },
+                            onDuplicate = {
+                                scope.launch {
+                                    val copy = message.copy(
+                                        id = 0,
+                                        title = "${message.title} (Cópia)",
+                                        scheduledTimeMillis = message.scheduledTimeMillis + 3600000L, // +1h
+                                        status = MessageStatus.DRAFT,
+                                        lastExecutionLog = ""
+                                    )
+                                    database.scheduledMessageDao().insertMessage(copy)
+                                    Toast.makeText(context, "📑 Agendamento duplicado como Rascunho!", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            onTogglePause = {
+                                scope.launch {
+                                    if (message.status == MessageStatus.PAUSED) {
+                                        database.scheduledMessageDao().resumeMessage(message.id)
+                                        SchedulerManager.scheduleMessage(context, message)
+                                        Toast.makeText(context, "▶️ Agendamento retomado!", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        database.scheduledMessageDao().pauseMessage(message.id)
+                                        SchedulerManager.cancelMessage(context, message.id)
+                                        Toast.makeText(context, "⏸️ Agendamento pausado!", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            onViewLogs = {
+                                viewingLogMessage = message
                             }
                         )
                     }
@@ -396,21 +436,210 @@ fun HomeScreen(
             }
         }
     }
+
+    // DIÁLOGO SELETOR DE APLICATIVO AO CLICAR EM "+ NOVO AGENDAMENTO"
+    if (showPlatformSelectorDialog) {
+        AlertDialog(
+            onDismissRequest = { showPlatformSelectorDialog = false },
+            title = {
+                Text("Escolha a Plataforma de Envio", fontWeight = FontWeight.Bold, color = TextPrimary)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Selecione onde deseja agendar a mensagem:", fontSize = 12.sp, color = TextSecondary)
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    val options = listOf(
+                        Triple(WhatsAppType.WHATSAPP_NORMAL, "💬 WhatsApp Oficial", GreenDark),
+                        Triple(WhatsAppType.WHATSAPP_BUSINESS, "💼 WhatsApp Business", GreenSecondary),
+                        Triple(WhatsAppType.WHATSAPP_MOD, "⚡ WhatsApp Mods (GB/FM/Yo/Plus/Aero)", Color(0xFF00897B)),
+                        Triple(WhatsAppType.INSTAGRAM, "📸 Instagram Oficial", Color(0xFFE1306C)),
+                        Triple(WhatsAppType.INSTAGRAM_MOD, "🌟 Instagram Mods (InstaPro/Instander/Honista)", Color(0xFFC13584)),
+                        Triple(WhatsAppType.FACEBOOK, "📘 Facebook & Lite", Color(0xFF1877F2)),
+                        Triple(WhatsAppType.META_BUSINESS, "🏢 Meta Business Suite", Color(0xFF0064E0))
+                    )
+
+                    options.forEach { (type, label, color) ->
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = DarkCard),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showPlatformSelectorDialog = false
+                                    onNavigateToNew(type)
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    color = color,
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.size(10.dp)
+                                ) {}
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(label, fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 13.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showPlatformSelectorDialog = false }) {
+                    Text("Cancelar", color = TextSecondary)
+                }
+            },
+            containerColor = DarkSurface
+        )
+    }
+
+    // DIÁLOGO DE FERIADOS NACIONAIS & SINCRONIZAÇÃO DE CALENDÁRIO
+    if (showHolidaysDialog) {
+        AlertDialog(
+            onDismissRequest = { showHolidaysDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Event, contentDescription = null, tint = GreenPrimary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Calendário & Feriados Nacionais", fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 16.sp)
+                }
+            },
+            text = {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    item {
+                        // Sincronizar com Google Agenda
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    var count = 0
+                                    pendingMessages.forEach { msg ->
+                                        val id = CalendarSyncHelper.syncEvent(context, msg.title, msg.text, msg.scheduledTimeMillis, msg.calendarEventId)
+                                        if (id != null) count++
+                                    }
+                                    Toast.makeText(context, "Sincronizados $count agendamentos com sua Google Agenda!", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Sync, contentDescription = null, tint = DarkBackground)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Sincronizar com a Google Agenda", color = DarkBackground, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text("Datas Comemorativas do Brasil:", fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 13.sp)
+                    }
+
+                    items(HolidayCalendarHelper.BRAZIL_HOLIDAYS_2026_2027) { holiday ->
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = DarkCard),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(holiday.name, fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 13.sp)
+                                        Text("${holiday.day}/${holiday.month} • ${holiday.description}", fontSize = 11.sp, color = GreenPrimary)
+                                    }
+                                    FilledTonalButton(
+                                        onClick = {
+                                            scope.launch {
+                                                val ts = HolidayCalendarHelper.getHolidayTimestamp(holiday)
+                                                val newMsg = ScheduledMessage(
+                                                    title = "🎉 ${holiday.name}",
+                                                    text = holiday.suggestedMessage,
+                                                    recipientsJson = "[]",
+                                                    scheduledTimeMillis = ts,
+                                                    whatsAppType = WhatsAppType.WHATSAPP_NORMAL,
+                                                    scheduleType = ScheduleType.ENGAGEMENT_CAMPAIGN,
+                                                    status = MessageStatus.DRAFT
+                                                )
+                                                database.scheduledMessageDao().insertMessage(newMsg)
+                                                Toast.makeText(context, "Criado rascunho para ${holiday.name}!", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text("+ Campanha", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showHolidaysDialog = false }, colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary)) {
+                    Text("Concluir", color = DarkBackground, fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = DarkSurface
+        )
+    }
+
+    // DIÁLOGO DE VISUALIZAÇÃO DE LOGS
+    viewingLogMessage?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { viewingLogMessage = null },
+            title = { Text("Logs de Execução", fontWeight = FontWeight.Bold, color = TextPrimary) },
+            text = {
+                Column {
+                    Text("Campanha: ${msg.title}", fontWeight = FontWeight.Bold, color = GreenPrimary, fontSize = 13.sp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Surface(
+                        color = DarkBackground,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            msg.lastExecutionLog.ifBlank { "Nenhum log registrado para este agendamento até o momento." },
+                            color = TextPrimary,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { viewingLogMessage = null }, colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary)) {
+                    Text("Fechar", color = DarkBackground)
+                }
+            },
+            containerColor = DarkSurface
+        )
+    }
 }
 
 @Composable
 fun MessageItemCard(
     message: ScheduledMessage,
     tabIndex: Int,
+    onEdit: () -> Unit,
     onSoftDelete: () -> Unit,
     onRestore: () -> Unit,
     onPermanentDelete: () -> Unit,
-    onSendNow: () -> Unit
+    onSendNow: () -> Unit,
+    onDuplicate: () -> Unit,
+    onTogglePause: () -> Unit,
+    onViewLogs: () -> Unit
 ) {
     val dateFormat = remember { SimpleDateFormat("dd/MM/yyyy 'às' HH:mm", Locale("pt", "BR")) }
     val dataHoraFormatada = remember(message.scheduledTimeMillis) {
         dateFormat.format(Date(message.scheduledTimeMillis))
     }
+
+    var showMenu by remember { mutableStateOf(false) }
 
     val recipientsCount = remember(message.recipientsJson) {
         try {
@@ -426,7 +655,7 @@ fun MessageItemCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
-            // Linha do Título e Badges da Plataforma
+            // Linha do Título, Badges da Plataforma e Menu 3 Pontinhos
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -440,31 +669,100 @@ fun MessageItemCard(
                     modifier = Modifier.weight(1f)
                 )
 
-                Surface(
-                    color = when (message.whatsAppType) {
-                        WhatsAppType.WHATSAPP_BUSINESS -> GreenSecondary
-                        WhatsAppType.WHATSAPP_MOD -> Color(0xFF00897B)
-                        WhatsAppType.INSTAGRAM -> Color(0xFFE1306C)
-                        WhatsAppType.FACEBOOK -> Color(0xFF1877F2)
-                        WhatsAppType.META_BUSINESS -> Color(0xFF0064E0)
-                        else -> GreenDark
-                    },
-                    shape = RoundedCornerShape(6.dp)
-                ) {
-                    Text(
-                        when (message.whatsAppType) {
-                            WhatsAppType.WHATSAPP_BUSINESS -> "WP Business"
-                            WhatsAppType.WHATSAPP_MOD -> "WP Mod"
-                            WhatsAppType.INSTAGRAM -> "Instagram"
-                            WhatsAppType.FACEBOOK -> "Facebook"
-                            WhatsAppType.META_BUSINESS -> "Meta Suite"
-                            else -> "WhatsApp"
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Badge da Plataforma
+                    Surface(
+                        color = when (message.whatsAppType) {
+                            WhatsAppType.WHATSAPP_BUSINESS -> GreenSecondary
+                            WhatsAppType.WHATSAPP_MOD -> Color(0xFF00897B)
+                            WhatsAppType.INSTAGRAM -> Color(0xFFE1306C)
+                            WhatsAppType.INSTAGRAM_MOD -> Color(0xFFC13584)
+                            WhatsAppType.FACEBOOK -> Color(0xFF1877F2)
+                            WhatsAppType.META_BUSINESS -> Color(0xFF0064E0)
+                            else -> GreenDark
                         },
-                        color = Color.White,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text(
+                            when (message.whatsAppType) {
+                                WhatsAppType.WHATSAPP_BUSINESS -> "WP Business"
+                                WhatsAppType.WHATSAPP_MOD -> "WP Mod"
+                                WhatsAppType.INSTAGRAM -> "Instagram"
+                                WhatsAppType.INSTAGRAM_MOD -> "Insta Mod"
+                                WhatsAppType.FACEBOOK -> "Facebook"
+                                WhatsAppType.META_BUSINESS -> "Meta Suite"
+                                else -> "WhatsApp"
+                            },
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(6.dp))
+
+                    // 🌟 MENU DE 3 PONTINHOS COMPLETO
+                    Box {
+                        IconButton(onClick = { showMenu = true }, modifier = Modifier.size(28.dp)) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Mais Opções", tint = TextPrimary)
+                        }
+
+                        DropdownMenu(
+                            expanded = showMenu,
+                            onDismissRequest = { showMenu = false },
+                            modifier = Modifier.background(DarkSurface)
+                        ) {
+                            // 1. EDITAR
+                            DropdownMenuItem(
+                                text = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Edit, contentDescription = null, tint = GreenPrimary, modifier = Modifier.size(16.dp)); Spacer(modifier = Modifier.width(8.dp)); Text("Editar", color = TextPrimary) } },
+                                onClick = { showMenu = false; onEdit() }
+                            )
+
+                            // 2. ENVIAR AGORA
+                            DropdownMenuItem(
+                                text = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Send, contentDescription = null, tint = GreenPrimary, modifier = Modifier.size(16.dp)); Spacer(modifier = Modifier.width(8.dp)); Text("Enviar Agora", color = TextPrimary) } },
+                                onClick = { showMenu = false; onSendNow() }
+                            )
+
+                            // 3. DUPLICAR
+                            DropdownMenuItem(
+                                text = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.ContentCopy, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(16.dp)); Spacer(modifier = Modifier.width(8.dp)); Text("Duplicar", color = TextPrimary) } },
+                                onClick = { showMenu = false; onDuplicate() }
+                            )
+
+                            // 4. PAUSAR / RETOMAR
+                            if (tabIndex == 0) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(if (message.status == MessageStatus.PAUSED) Icons.Default.PlayArrow else Icons.Default.Pause, contentDescription = null, tint = AccentOrange, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(if (message.status == MessageStatus.PAUSED) "Retomar Agendamento" else "Pausar Agendamento", color = TextPrimary)
+                                        }
+                                    },
+                                    onClick = { showMenu = false; onTogglePause() }
+                                )
+                            }
+
+                            // 5. VER LOGS
+                            DropdownMenuItem(
+                                text = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(16.dp)); Spacer(modifier = Modifier.width(8.dp)); Text("Ver Logs de Envio", color = TextPrimary) } },
+                                onClick = { showMenu = false; onViewLogs() }
+                            )
+
+                            Divider(color = DarkBorder)
+
+                            // 6. EXCLUIR / MOVER PARA LIXEIRA
+                            DropdownMenuItem(
+                                text = { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Delete, contentDescription = null, tint = AccentRed, modifier = Modifier.size(16.dp)); Spacer(modifier = Modifier.width(8.dp)); Text(if (tabIndex == 4) "Excluir Definitivamente" else "Excluir", color = AccentRed) } },
+                                onClick = {
+                                    showMenu = false
+                                    if (tabIndex == 4) onPermanentDelete() else onSoftDelete()
+                                }
+                            )
+                        }
+                    }
                 }
             }
 
@@ -472,6 +770,12 @@ fun MessageItemCard(
 
             // Badges secundárias
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (message.status == MessageStatus.PAUSED) {
+                    Surface(color = AccentOrange.copy(alpha = 0.2f), shape = RoundedCornerShape(4.dp)) {
+                        Text("⏸️ Pausado", color = AccentOrange, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                    }
+                }
+
                 if (message.scheduleType != ScheduleType.CONTACT_GROUP) {
                     Surface(color = DarkSurface, shape = RoundedCornerShape(4.dp)) {
                         Text(
@@ -532,7 +836,7 @@ fun MessageItemCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Linha Inferior com Horário, Destinatários e Ações
+            // Linha Inferior com Horário, Destinatários e Ações Rápidas
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -549,7 +853,7 @@ fun MessageItemCard(
                     Text("$recipientsCount", color = TextSecondary, fontSize = 12.sp)
                 }
 
-                // Ações por Aba
+                // Ações Rápidas por Aba
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     when (tabIndex) {
                         0 -> { // Pendentes
@@ -577,8 +881,8 @@ fun MessageItemCard(
                             }
                         }
                         3 -> { // Rascunhos
-                            IconButton(onClick = onSendNow, modifier = Modifier.size(28.dp)) {
-                                Icon(Icons.Default.Send, contentDescription = "Agendar", tint = GreenPrimary, modifier = Modifier.size(18.dp))
+                            IconButton(onClick = onEdit, modifier = Modifier.size(28.dp)) {
+                                Icon(Icons.Default.Edit, contentDescription = "Editar", tint = GreenPrimary, modifier = Modifier.size(18.dp))
                             }
                             IconButton(onClick = onSoftDelete, modifier = Modifier.size(28.dp)) {
                                 Icon(Icons.Default.Delete, contentDescription = "Excluir Rascunho", tint = TextSecondary, modifier = Modifier.size(18.dp))

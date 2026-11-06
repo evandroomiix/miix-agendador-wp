@@ -42,8 +42,13 @@
         <package android:name="com.fmwhatsapp" />
         <package android:name="com.yowhatsapp" />
         <package android:name="com.aero" />
+        <package android:name="com.whatsapp.plus" />
         <!-- Instagram Oficial e Mods -->
         <package android:name="com.instagram.android" />
+        <package android:name="com.instapro.android" />
+        <package android:name="com.instapro2.android" />
+        <package android:name="com.instamod.android" />
+        <package android:name="com.gbinsta" />
         <package android:name="com.instander.android" />
         <package android:name="com.honista.app" />
         <package android:name="com.aeroinsta.android" />
@@ -63,9 +68,9 @@
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
-        android:icon="@android:drawable/ic_dialog_email"
+        android:icon="@drawable/ic_app_icon"
         android:label="@string/app_name"
-        android:roundIcon="@android:drawable/ic_dialog_email"
+        android:roundIcon="@drawable/ic_app_icon_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.MiixAgendadorWP"
         tools:targetApi="34">

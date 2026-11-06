@@ -4,7 +4,9 @@ import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.provider.ContactsContract
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -28,6 +30,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.miix.agendadorwp.data.*
 import com.miix.agendadorwp.scheduler.SchedulerManager
 import com.miix.agendadorwp.service.AudioRecorderHelper
@@ -45,6 +48,8 @@ import java.util.*
 @Composable
 fun NewScheduleScreen(
     database: AppDatabase,
+    initialPlatform: WhatsAppType = WhatsAppType.WHATSAPP_NORMAL,
+    editingMessageId: Long? = null,
     onSuccess: () -> Unit
 ) {
     val context = LocalContext.current
@@ -52,17 +57,18 @@ fun NewScheduleScreen(
 
     var title by remember { mutableStateOf("") }
     var messageText by remember { mutableStateOf("") }
-    var whatsAppType by remember { mutableStateOf(WhatsAppType.WHATSAPP_NORMAL) }
+    var whatsAppType by remember { mutableStateOf(initialPlatform) }
     var scheduleType by remember { mutableStateOf(ScheduleType.CONTACT_GROUP) }
     var repeatMode by remember { mutableStateOf(RepeatMode.NONE) }
     var delaySeconds by remember { mutableFloatStateOf(10f) }
 
     // Opções PRO MAX
     var askBeforeSending by remember { mutableStateOf(false) }
-    var checkTimeConflict by remember { mutableStateOf(true) }
     var calendarSync by remember { mutableStateOf(false) }
-    var hasConflictDetected by remember { mutableStateOf(false) }
-    var conflictMessageInfo by remember { mutableStateOf("") }
+
+    // Diálogo e Estado da Verificação de Conflito de Tempo
+    var showConflictDialog by remember { mutableStateOf(false) }
+    var conflictDialogMessage by remember { mutableStateOf("") }
 
     // Enquete
     var pollQuestion by remember { mutableStateOf("") }
@@ -80,7 +86,6 @@ fun NewScheduleScreen(
     // Destinatários: Pair(Telefone/Identificador, Nome)
     val contactsList = remember { mutableStateListOf<Pair<String, String>>() }
     var newPhoneInput by remember { mutableStateOf("") }
-    var newNameInput by remember { mutableStateOf("") }
     var showAddMenu by remember { mutableStateOf(false) }
     var showBatchDialog by remember { mutableStateOf(false) }
     var batchText by remember { mutableStateOf("") }
@@ -126,6 +131,31 @@ fun NewScheduleScreen(
         }
     }
 
+    // 🌟 LAUNCHERS DE PERMISSÃO EM TEMPO DE EXECUÇÃO
+    val mediaPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { perms ->
+        if (perms.values.any { it }) {
+            mediaPickerLauncher.launch("image/*,video/*")
+        } else {
+            Toast.makeText(context, "Permissão de mídia necessária para fotos/vídeos.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val voicePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            val started = audioRecorder.startRecording()
+            if (started) {
+                isRecordingVoice = true
+                Toast.makeText(context, "🎙️ Gravando voz... Toque novamente para salvar!", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(context, "Permissão de microfone necessária para gravar áudio.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // Seletor de Contatos da Agenda do Telefone
     val contactPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickContact()
@@ -167,33 +197,40 @@ fun NewScheduleScreen(
         }
     }
 
-    // Checagem de Conflito de Tempo
-    fun verifyTimeConflict(timeMillis: Long) {
-        if (!checkTimeConflict) {
-            hasConflictDetected = false
-            return
-        }
-        scope.launch {
-            val rangeMs = 3 * 60 * 1000L // 3 minutos de margem
-            val conflicts = database.scheduledMessageDao().findTimeConflicts(timeMillis - rangeMs, timeMillis + rangeMs)
-            if (conflicts.isNotEmpty()) {
-                hasConflictDetected = true
-                val first = conflicts[0]
-                conflictMessageInfo = "'${first.title}' às ${timeFormat.format(Date(first.scheduledTimeMillis))}"
-            } else {
-                hasConflictDetected = false
+    // 🌟 MODO DE EDIÇÃO: Carregar Mensagem Existente
+    LaunchedEffect(editingMessageId) {
+        if (editingMessageId != null) {
+            val msg = database.scheduledMessageDao().getMessageById(editingMessageId)
+            if (msg != null) {
+                title = msg.title
+                messageText = msg.text
+                whatsAppType = msg.whatsAppType
+                scheduleType = msg.scheduleType
+                selectedTimestamp = msg.scheduledTimeMillis
+                attachmentType = msg.attachmentType
+                if (!msg.attachmentUri.isNullOrBlank()) attachmentUri = Uri.parse(msg.attachmentUri)
+                attachmentName = msg.attachmentName ?: ""
+                pollQuestion = msg.pollQuestion
+                repeatMode = msg.repeatMode
+                delaySeconds = msg.delayBetweenContactsSeconds.toFloat()
+                askBeforeSending = msg.askBeforeSending
+                calendarSync = msg.calendarSync
+                contactsList.clear()
+                try {
+                    val arr = JSONArray(msg.recipientsJson)
+                    for (i in 0 until arr.length()) {
+                        val obj = arr.getJSONObject(i)
+                        contactsList.add(Pair(obj.optString("phone"), obj.optString("name")))
+                    }
+                } catch (e: Exception) {}
             }
         }
-    }
-
-    LaunchedEffect(selectedTimestamp, checkTimeConflict) {
-        verifyTimeConflict(selectedTimestamp)
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Novo Agendamento PRO", fontWeight = FontWeight.Bold, color = TextPrimary) },
+                title = { Text(if (editingMessageId != null) "Editar Agendamento" else "Novo Agendamento PRO", fontWeight = FontWeight.Bold, color = TextPrimary) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkSurface)
             )
         },
@@ -225,7 +262,7 @@ fun NewScheduleScreen(
                 )
             }
 
-            // 2. Plataforma Alvo (WhatsApp, Business, Mods, Instagram, Facebook, Meta)
+            // 2. Plataforma Alvo
             item {
                 Column {
                     Text("Plataforma Alvo:", fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 14.sp)
@@ -234,8 +271,9 @@ fun NewScheduleScreen(
                         val platforms = listOf(
                             Triple(WhatsAppType.WHATSAPP_NORMAL, "WhatsApp", GreenDark),
                             Triple(WhatsAppType.WHATSAPP_BUSINESS, "WP Business", GreenSecondary),
-                            Triple(WhatsAppType.WHATSAPP_MOD, "WP Mod (GB/FM)", Color(0xFF00897B)),
+                            Triple(WhatsAppType.WHATSAPP_MOD, "WP Mod (GB/FM/Plus)", Color(0xFF00897B)),
                             Triple(WhatsAppType.INSTAGRAM, "Instagram", Color(0xFFE1306C)),
+                            Triple(WhatsAppType.INSTAGRAM_MOD, "Insta Mod (Pro/Instander)", Color(0xFFC13584)),
                             Triple(WhatsAppType.FACEBOOK, "Facebook", Color(0xFF1877F2)),
                             Triple(WhatsAppType.META_BUSINESS, "Meta Suite", Color(0xFF0064E0))
                         )
@@ -256,7 +294,7 @@ fun NewScheduleScreen(
                 }
             }
 
-            // 3. Tipo de Agendamento (Contatos/Grupos, Status, Enquete, Lista de Transmissão, Campanha)
+            // 3. Tipo de Agendamento
             item {
                 Column {
                     Text("Tipo de Agendamento:", fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 14.sp)
@@ -301,7 +339,7 @@ fun NewScheduleScreen(
                                 value = pollQuestion,
                                 onValueChange = { pollQuestion = it },
                                 label = { Text("Pergunta da Enquete") },
-                                placeholder = { Text("Qual o melhor horário?") },
+                                placeholder = { Text("Qual o melhor dia?") },
                                 modifier = Modifier.fillMaxWidth()
                             )
                             Spacer(modifier = Modifier.height(8.dp))
@@ -336,7 +374,7 @@ fun NewScheduleScreen(
                 }
             }
 
-            // 5. Destinatários (Contatos / Grupos) - Não obrigatório se for Status
+            // 5. Destinatários (Contatos / Grupos)
             if (scheduleType != ScheduleType.STATUS) {
                 item {
                     Card(
@@ -352,7 +390,6 @@ fun NewScheduleScreen(
                             ) {
                                 Text("Destinatários (${contactsList.size})", fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 14.sp)
 
-                                // Botão "+" para Capturar do WhatsApp ou Selecionar da Agenda
                                 Box {
                                     FilledTonalButton(
                                         onClick = { showAddMenu = true },
@@ -368,7 +405,7 @@ fun NewScheduleScreen(
                                         onDismissRequest = { showAddMenu = false },
                                         modifier = Modifier.background(DarkSurface)
                                     ) {
-                                        // 🌟 CAPTURAR DIRETO DO WHATSAPP
+                                        // 📲 CAPTURAR DIRETO DO WHATSAPP
                                         DropdownMenuItem(
                                             text = {
                                                 Column {
@@ -380,7 +417,7 @@ fun NewScheduleScreen(
                                                 showAddMenu = false
                                                 val targetPkg = when (whatsAppType) {
                                                     WhatsAppType.WHATSAPP_BUSINESS -> "com.whatsapp.w4b"
-                                                    WhatsAppType.WHATSAPP_MOD -> "com.gbwhatsapp"
+                                                    WhatsAppType.WHATSAPP_MOD -> PlatformHelper.getInstalledWhatsAppModPackage(context)
                                                     else -> "com.whatsapp"
                                                 }
                                                 WhatsAppAccessibilityService.isCaptureModeActive = true
@@ -421,7 +458,7 @@ fun NewScheduleScreen(
 
                             Spacer(modifier = Modifier.height(8.dp))
 
-                            // Entrada Manual Rápida
+                            // Entrada Manual
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
@@ -447,7 +484,7 @@ fun NewScheduleScreen(
                                 }
                             }
 
-                            // Chips com os contatos adicionados
+                            // Chips de Contatos
                             if (contactsList.isNotEmpty()) {
                                 Spacer(modifier = Modifier.height(10.dp))
                                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -482,7 +519,6 @@ fun NewScheduleScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text("Mensagem / Descrição:", fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 14.sp)
-                        // Tags dinâmicas para engajamento
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             listOf("{nome}", "{saudacao}").forEach { tag ->
                                 SuggestionChip(
@@ -509,7 +545,7 @@ fun NewScheduleScreen(
                 }
             }
 
-            // 7. Campo ANEXO (Imagem/Vídeo, Documento, Áudio, Gravar Voz)
+            // 7. Campo ANEXO (Com Checagem de Permissões em Tempo Real)
             item {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = DarkCard),
@@ -520,13 +556,25 @@ fun NewScheduleScreen(
                         Text("Anexos de Mídia & Documentos", fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 14.sp)
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Botões de escolha do anexo
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
+                            // 📷 IMAGEM OU VÍDEO (Com pedido de permissão se necessário)
                             OutlinedButton(
-                                onClick = { mediaPickerLauncher.launch("image/*,video/*") },
+                                onClick = {
+                                    val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                        arrayOf(android.Manifest.permission.READ_MEDIA_IMAGES, android.Manifest.permission.READ_MEDIA_VIDEO)
+                                    } else {
+                                        arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+                                    }
+                                    val granted = perms.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
+                                    if (granted) {
+                                        mediaPickerLauncher.launch("image/*,video/*")
+                                    } else {
+                                        mediaPermissionLauncher.launch(perms)
+                                    }
+                                },
                                 modifier = Modifier.weight(1f),
                                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)
                             ) {
@@ -536,6 +584,7 @@ fun NewScheduleScreen(
                                 }
                             }
 
+                            // 📄 DOCUMENTO
                             OutlinedButton(
                                 onClick = { docPickerLauncher.launch("*/*") },
                                 modifier = Modifier.weight(1f),
@@ -547,6 +596,7 @@ fun NewScheduleScreen(
                                 }
                             }
 
+                            // 🎵 ÁUDIO
                             OutlinedButton(
                                 onClick = { audioPickerLauncher.launch("audio/*") },
                                 modifier = Modifier.weight(1f),
@@ -558,16 +608,18 @@ fun NewScheduleScreen(
                                 }
                             }
 
-                            // Botão Gravar Voz
+                            // 🎙️ GRAVAR VOZ (Com pedido de permissão de microfone se necessário)
                             OutlinedButton(
                                 onClick = {
                                     if (!isRecordingVoice) {
-                                        val started = audioRecorder.startRecording()
-                                        if (started) {
-                                            isRecordingVoice = true
-                                            Toast.makeText(context, "🎙️ Gravando voz... Toque novamente para salvar!", Toast.LENGTH_SHORT).show()
+                                        if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                            val started = audioRecorder.startRecording()
+                                            if (started) {
+                                                isRecordingVoice = true
+                                                Toast.makeText(context, "🎙️ Gravando voz... Toque em Parar para salvar!", Toast.LENGTH_SHORT).show()
+                                            }
                                         } else {
-                                            Toast.makeText(context, "Permissão de microfone necessária.", Toast.LENGTH_SHORT).show()
+                                            voicePermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
                                         }
                                     } else {
                                         val file = audioRecorder.stopRecording()
@@ -575,7 +627,7 @@ fun NewScheduleScreen(
                                         if (file != null && file.exists()) {
                                             attachmentUri = Uri.fromFile(file)
                                             attachmentType = AttachmentType.VOICE_NOTE
-                                            attachmentName = "Gravação de Voz (${file.name})"
+                                            attachmentName = "Nota de Voz (${file.name})"
                                             Toast.makeText(context, "✅ Áudio gravado com sucesso!", Toast.LENGTH_SHORT).show()
                                         }
                                     }
@@ -591,7 +643,7 @@ fun NewScheduleScreen(
                             }
                         }
 
-                        // Preview do anexo selecionado
+                        // Preview do anexo
                         if (attachmentUri != null && attachmentType != AttachmentType.NONE) {
                             Spacer(modifier = Modifier.height(10.dp))
                             Surface(
@@ -636,7 +688,7 @@ fun NewScheduleScreen(
                 }
             }
 
-            // 8. Data, Hora e Alerta de Conflito de Tempo
+            // 8. Data, Hora e BOTÃO CLICÁVEL DE VERIFICAR CONFLITO
             item {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = DarkCard),
@@ -698,41 +750,39 @@ fun NewScheduleScreen(
                             }
                         }
 
-                        // Alerta Visual de Conflito de Tempo
-                        if (hasConflictDetected) {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Surface(
-                                color = AccentOrange.copy(alpha = 0.15f),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.Warning, contentDescription = null, tint = AccentOrange, modifier = Modifier.size(18.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            "Conflito de Horário! Já existe envio agendado: $conflictMessageInfo",
-                                            fontSize = 11.sp,
-                                            color = AccentOrange
-                                        )
-                                    }
-                                    TextButton(onClick = {
-                                        selectedTimestamp += 5 * 60 * 1000L // Adiciona 5 min
-                                    }) {
-                                        Text("+5 min", fontWeight = FontWeight.Bold, color = GreenPrimary, fontSize = 11.sp)
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // 🌟 BOTÃO CLICÁVEL: VERIFICAR CONFLITO DE TEMPO
+                        FilledTonalButton(
+                            onClick = {
+                                scope.launch {
+                                    val rangeMs = 3 * 60 * 1000L // 3 minutos
+                                    val conflicts = database.scheduledMessageDao().findTimeConflicts(
+                                        selectedTimestamp - rangeMs,
+                                        selectedTimestamp + rangeMs,
+                                        editingMessageId ?: -1L
+                                    )
+                                    if (conflicts.isNotEmpty()) {
+                                        val first = conflicts[0]
+                                        conflictDialogMessage = "Existe conflito com o agendamento '${first.title}' às ${timeFormat.format(Date(first.scheduledTimeMillis))}."
+                                        showConflictDialog = true
+                                    } else {
+                                        Toast.makeText(context, "✅ Horário 100% Livre! Nenhum conflito encontrado.", Toast.LENGTH_LONG).show()
                                     }
                                 }
-                            }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.filledTonalButtonColors(containerColor = DarkSurface)
+                        ) {
+                            Icon(Icons.Default.HourglassEmpty, contentDescription = null, tint = AccentOrange, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Verificar Conflito de Tempo", color = AccentOrange, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
                     }
                 }
             }
 
-            // 9. Opções Avançadas PRO MAX: Perguntar Antes, Conflito, Calendário, Anti-ban
+            // 9. Opções Avançadas PRO MAX: Perguntar Antes, Calendário, Anti-ban
             item {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = DarkCard),
@@ -761,25 +811,6 @@ fun NewScheduleScreen(
 
                         Divider(color = DarkBorder)
 
-                        // Verificar Conflito de Tempo
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("⚠️ Verificar conflito de tempo", fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 13.sp)
-                                Text("Alerta se já houver mensagens no mesmo horário", fontSize = 11.sp, color = TextSecondary)
-                            }
-                            Switch(
-                                checked = checkTimeConflict,
-                                onCheckedChange = { checkTimeConflict = it },
-                                colors = SwitchDefaults.colors(checkedThumbColor = GreenPrimary)
-                            )
-                        }
-
-                        Divider(color = DarkBorder)
-
                         // Sincronizar Calendários
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -788,7 +819,7 @@ fun NewScheduleScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("📅 Sincronizar com Calendário", fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 13.sp)
-                                Text("Salva automaticamente na Google Agenda / Calendário Android", fontSize = 11.sp, color = TextSecondary)
+                                Text("Salva na Google Agenda / Calendário Android", fontSize = 11.sp, color = TextSecondary)
                             }
                             Switch(
                                 checked = calendarSync,
@@ -820,7 +851,7 @@ fun NewScheduleScreen(
                 }
             }
 
-            // 10. Botões de Ação: "Salvar como Rascunho" e "Agendar Envio"
+            // 10. Botões de Ação
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -847,6 +878,7 @@ fun NewScheduleScreen(
                                 val pollOptionsJson = JSONArray(pollOptions).toString()
 
                                 val draftMessage = ScheduledMessage(
+                                    id = editingMessageId ?: 0L,
                                     title = title,
                                     text = messageText,
                                     recipientsJson = recipientsJson,
@@ -859,14 +891,18 @@ fun NewScheduleScreen(
                                     pollQuestion = pollQuestion,
                                     pollOptionsJson = pollOptionsJson,
                                     askBeforeSending = askBeforeSending,
-                                    checkTimeConflict = checkTimeConflict,
                                     calendarSync = calendarSync,
                                     delayBetweenContactsSeconds = delaySeconds.toInt(),
                                     status = MessageStatus.DRAFT
                                 )
 
-                                database.scheduledMessageDao().insertMessage(draftMessage)
-                                Toast.makeText(context, "💾 Salvo como Rascunho!", Toast.LENGTH_SHORT).show()
+                                if (editingMessageId != null) {
+                                    database.scheduledMessageDao().updateMessage(draftMessage)
+                                    Toast.makeText(context, "💾 Rascunho atualizado!", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    database.scheduledMessageDao().insertMessage(draftMessage)
+                                    Toast.makeText(context, "💾 Salvo como Rascunho!", Toast.LENGTH_SHORT).show()
+                                }
                                 onSuccess()
                             }
                         },
@@ -908,7 +944,6 @@ fun NewScheduleScreen(
 
                                 val pollOptionsJson = JSONArray(pollOptions).toString()
 
-                                // Sincronização opcional com o calendário
                                 var calendarEventId: Long? = null
                                 if (calendarSync) {
                                     calendarEventId = CalendarSyncHelper.syncEvent(
@@ -920,6 +955,7 @@ fun NewScheduleScreen(
                                 }
 
                                 val scheduledMessage = ScheduledMessage(
+                                    id = editingMessageId ?: 0L,
                                     title = title,
                                     text = messageText,
                                     recipientsJson = recipientsJson,
@@ -932,7 +968,6 @@ fun NewScheduleScreen(
                                     pollQuestion = pollQuestion,
                                     pollOptionsJson = pollOptionsJson,
                                     askBeforeSending = askBeforeSending,
-                                    checkTimeConflict = checkTimeConflict,
                                     calendarSync = calendarSync,
                                     calendarEventId = calendarEventId,
                                     repeatMode = repeatMode,
@@ -940,11 +975,16 @@ fun NewScheduleScreen(
                                     status = MessageStatus.PENDING
                                 )
 
-                                val newId = database.scheduledMessageDao().insertMessage(scheduledMessage)
-                                val finalMessage = scheduledMessage.copy(id = newId)
-                                SchedulerManager.scheduleMessage(context, finalMessage)
-
-                                Toast.makeText(context, "🚀 Agendamento realizado com sucesso!", Toast.LENGTH_SHORT).show()
+                                if (editingMessageId != null) {
+                                    database.scheduledMessageDao().updateMessage(scheduledMessage)
+                                    SchedulerManager.scheduleMessage(context, scheduledMessage)
+                                    Toast.makeText(context, "🚀 Agendamento atualizado com sucesso!", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    val newId = database.scheduledMessageDao().insertMessage(scheduledMessage)
+                                    val finalMessage = scheduledMessage.copy(id = newId)
+                                    SchedulerManager.scheduleMessage(context, finalMessage)
+                                    Toast.makeText(context, "🚀 Agendamento realizado com sucesso!", Toast.LENGTH_SHORT).show()
+                                }
                                 onSuccess()
                             }
                         },
@@ -952,13 +992,52 @@ fun NewScheduleScreen(
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(10.dp)
                     ) {
-                        Text("Agendar Envio", color = DarkBackground, fontWeight = FontWeight.Bold)
+                        Text(if (editingMessageId != null) "Salvar Alterações" else "Agendar Envio", color = DarkBackground, fontWeight = FontWeight.Bold)
                     }
                 }
             }
 
             item { Spacer(modifier = Modifier.height(24.dp)) }
         }
+    }
+
+    // Diálogo de Conflito de Tempo
+    if (showConflictDialog) {
+        AlertDialog(
+            onDismissRequest = { showConflictDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Warning, contentDescription = null, tint = AccentOrange)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Conflito de Tempo Detectado", fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 16.sp)
+                }
+            },
+            text = {
+                Column {
+                    Text(conflictDialogMessage, fontSize = 13.sp, color = TextPrimary)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Deseja adiantar este agendamento em +5 minutos para evitar sobreposição?", fontSize = 12.sp, color = TextSecondary)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        selectedTimestamp += 5 * 60 * 1000L
+                        showConflictDialog = false
+                        Toast.makeText(context, "Horário ajustado em +5 minutos!", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary)
+                ) {
+                    Text("Ajustar +5 min", color = DarkBackground, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConflictDialog = false }) {
+                    Text("Manter Horário", color = TextSecondary)
+                }
+            },
+            containerColor = DarkSurface
+        )
     }
 
     // Diálogo de Importação em Massa de Contatos

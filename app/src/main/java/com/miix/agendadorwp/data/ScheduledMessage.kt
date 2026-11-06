@@ -8,6 +8,7 @@ enum class WhatsAppType {
     WHATSAPP_BUSINESS,
     WHATSAPP_MOD,
     INSTAGRAM,
+    INSTAGRAM_MOD,
     FACEBOOK,
     META_BUSINESS
 }
@@ -33,7 +34,8 @@ enum class MessageStatus {
     DONE,       // Feito
     FAILED,     // Falhado
     DRAFT,      // Rascunhos
-    DELETED     // Excluído (Lixeira)
+    DELETED,    // Excluído (Lixeira)
+    PAUSED      // Pausado
 }
 
 enum class RepeatMode {

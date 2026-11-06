@@ -48,16 +48,16 @@ jobs:
       - name: Localizar e Renomear APK
         run: |
           mkdir -p output_apk
-          find app/build/outputs/apk -name "*.apk" -exec cp {} output_apk/MiixAgendadorWP_v1.2.0_PRO_MAX.apk \;
-          cp output_apk/MiixAgendadorWP_v1.2.0_PRO_MAX.apk output_apk/MiixAgendadorWP.apk
+          find app/build/outputs/apk -name "*.apk" -exec cp {} output_apk/MiixAgendadorWP_v1.3.0_PRO_MAX.apk \;
+          cp output_apk/MiixAgendadorWP_v1.3.0_PRO_MAX.apk output_apk/MiixAgendadorWP.apk
           echo "Verificando APK gerado:"
           ls -lh output_apk/
 
       - name: Upload do APK como Artefato
         uses: actions/upload-artifact@v4
         with:
-          name: MiixAgendadorWP-v1.2.0-PRO-MAX
-          path: output_apk/MiixAgendadorWP_v1.2.0_PRO_MAX.apk
+          name: MiixAgendadorWP-v1.3.0-PRO-MAX
+          path: output_apk/MiixAgendadorWP_v1.3.0_PRO_MAX.apk
           retention-days: 30
 
       - name: Criar Release no GitHub (se Tag ou Execução Manual)
