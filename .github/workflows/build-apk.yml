@@ -18,6 +18,8 @@ jobs:
     steps:
       - name: Checkout do Código
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Configurar Java 17
         uses: actions/setup-java@v4
@@ -30,17 +32,27 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Gerar Chave de Release Oficial
+      - name: Configurar Chave de Assinatura Permanente
         run: |
-          keytool -genkeypair -v \
-            -keystore release.jks \
-            -alias miix \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass miixagendador123 \
-            -keypass miixagendador123 \
-            -dname "CN=Miix Agendador WP, OU=Mobile, O=Miix, L=Sao Paulo, ST=SP, C=BR"
+          mkdir -p keystore
+          if [ ! -f keystore/release.jks ]; then
+            echo "Gerando chave criptográfica de assinatura permanente..."
+            keytool -genkeypair -v \
+              -keystore keystore/release.jks \
+              -alias miix \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass miixagendador123 \
+              -keypass miixagendador123 \
+              -dname "CN=Miix Agendador WP, OU=Mobile, O=Miix, L=Sao Paulo, ST=SP, C=BR"
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            git add keystore/release.jks
+            git commit -m "chore(ci): fixar chave release.jks permanente [skip ci]" || true
+            git push origin HEAD:main || true
+          fi
+          cp keystore/release.jks release.jks
 
       - name: Compilar APK (Release)
         run: gradle assembleRelease --no-daemon --stacktrace
@@ -48,36 +60,39 @@ jobs:
       - name: Localizar e Renomear APK
         run: |
           mkdir -p output_apk
-          find app/build/outputs/apk -name "*.apk" -exec cp {} output_apk/MiixAgendadorWP_v1.3.0_PRO_MAX.apk \;
-          cp output_apk/MiixAgendadorWP_v1.3.0_PRO_MAX.apk output_apk/MiixAgendadorWP.apk
+          find app/build/outputs/apk -name "*.apk" -exec cp {} output_apk/MiixAgendadorWP_v1.4.0_PRO_MAX.apk \;
+          cp output_apk/MiixAgendadorWP_v1.4.0_PRO_MAX.apk output_apk/MiixAgendadorWP.apk
           echo "Verificando APK gerado:"
           ls -lh output_apk/
 
       - name: Upload do APK como Artefato
         uses: actions/upload-artifact@v4
         with:
-          name: MiixAgendadorWP-v1.3.0-PRO-MAX
-          path: output_apk/MiixAgendadorWP_v1.3.0_PRO_MAX.apk
+          name: MiixAgendadorWP-v1.4.0-PRO-MAX
+          path: output_apk/MiixAgendadorWP_v1.4.0_PRO_MAX.apk
           retention-days: 30
 
-      - name: Criar Release no GitHub (se Tag ou Execução Manual)
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+      - name: Publicar Release no GitHub
         uses: softprops/action-gh-release@v2
+        if: github.ref == 'refs/heads/main'
         with:
-          name: "Miix Agendador WP v1.0.0"
-          tag_name: ${{ github.ref_name }}
-          files: output_apk/MiixAgendadorWP.apk
+          name: "Miix Agendador WP v1.4.0 PRO MAX"
+          tag_name: "v1.4.0"
+          files: |
+            output_apk/MiixAgendadorWP_v1.4.0_PRO_MAX.apk
+            output_apk/MiixAgendadorWP.apk
           body: |
-            ## 🚀 Miix Agendador WP - v1.0.0 (Modo PRO)
+            ## 🚀 Miix Agendador WP - v1.4.0 (Modo PRO MAX)
             
-            Aplicativo de agendamento automático de mensagens para **WhatsApp** e **WhatsApp Business**.
+            Aplicativo de agendamento automático de mensagens com suporte a atualizações no próprio app.
             
-            ### ✨ Recursos:
-            - Disparos automáticos no WhatsApp e WhatsApp Business via Serviço de Acessibilidade.
-            - Suporte a múltiplos contatos e importação em lote (CSV/Lista).
-            - Intervalo de segurança anti-ban configurável.
-            - Variáveis dinâmicas na mensagem (`{nome}`, `{telefone}`).
-            - Repetição diária, semanal e em dias úteis.
-            - 100% gratuito, sem anúncios e sem limites de envio.
+            ### ✨ O que há de novo:
+            - **Sistema de Atualizações Automáticas (In-App Updater):** Botão "Buscar Atualizações" direto no app.
+            - **Chave de Assinatura Criptográfica Permanente:** Todas as próximas atualizações instalam direto sem erro.
+            - **Novo Ícone MIIX:** Design moderno escuro e verde esmeralda.
+            - **Menu de 3 Pontinhos:** Editar, Excluir, Enviar Agora, Duplicar, Pausar e Logs.
+            - **Feriados Nacionais & Calendário:** Datas comemorativas com campanhas prontas.
+            - **Verificação de Conflito de Tempo Clicável.**
+            - **Permissões solicitadas na hora** para fotos, vídeos e gravação de voz.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

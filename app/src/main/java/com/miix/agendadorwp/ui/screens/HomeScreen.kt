@@ -29,9 +29,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.miix.agendadorwp.data.*
 import com.miix.agendadorwp.scheduler.SchedulerManager
+import com.miix.agendadorwp.service.AppUpdateManager
 import com.miix.agendadorwp.service.CalendarSyncHelper
 import com.miix.agendadorwp.service.ExecutionForegroundService
 import com.miix.agendadorwp.service.HolidayCalendarHelper
+import com.miix.agendadorwp.service.UpdateInfo
 import com.miix.agendadorwp.service.WhatsAppAccessibilityService
 import com.miix.agendadorwp.ui.theme.*
 import kotlinx.coroutines.launch
@@ -68,6 +70,12 @@ fun HomeScreen(
     var showHolidaysDialog by remember { mutableStateOf(false) }
     var viewingLogMessage by remember { mutableStateOf<ScheduledMessage?>(null) }
 
+    // Atualização do Aplicativo (In-App Updater)
+    var isCheckingUpdate by remember { mutableStateOf(false) }
+    var availableUpdate by remember { mutableStateOf<UpdateInfo?>(null) }
+    var isDownloadingUpdate by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableFloatStateOf(0f) }
+
     // Atualização em tempo real ao voltar das Configurações do Android
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -96,9 +104,29 @@ fun HomeScreen(
                     }
                 },
                 actions = {
+                    // Botão Buscar Atualizações
+                    IconButton(onClick = {
+                        isCheckingUpdate = true
+                        scope.launch {
+                            val update = AppUpdateManager.checkForUpdates(context)
+                            isCheckingUpdate = false
+                            if (update != null) {
+                                availableUpdate = update
+                            } else {
+                                Toast.makeText(context, "🎉 Você já está com a versão mais recente instalada!", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }) {
+                        if (isCheckingUpdate) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), color = GreenPrimary, strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.CloudDownload, contentDescription = "Buscar Atualizações", tint = GreenPrimary)
+                        }
+                    }
+
                     // Botão Sincronizar Calendário & Feriados Nacionais
                     IconButton(onClick = { showHolidaysDialog = true }) {
-                        Icon(Icons.Default.Event, contentDescription = "Feriados & Calendário", tint = GreenPrimary)
+                        Icon(Icons.Default.Event, contentDescription = "Feriados & Calendário", tint = TextPrimary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkSurface)
@@ -614,6 +642,77 @@ fun HomeScreen(
             confirmButton = {
                 Button(onClick = { viewingLogMessage = null }, colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary)) {
                     Text("Fechar", color = DarkBackground)
+                }
+            },
+            containerColor = DarkSurface
+        )
+    }
+
+    // 🌟 DIÁLOGO DE ATUALIZAÇÃO AUTOMÁTICA DO APLICATIVO
+    availableUpdate?.let { update ->
+        AlertDialog(
+            onDismissRequest = { if (!isDownloadingUpdate) availableUpdate = null },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.SystemUpdate, contentDescription = null, tint = GreenPrimary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Nova Versão Disponível!", fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 16.sp)
+                }
+            },
+            text = {
+                Column {
+                    Text("Versão: ${update.versionName}", fontWeight = FontWeight.Bold, color = GreenPrimary, fontSize = 14.sp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Novidades da Versão:", fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 13.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Surface(
+                        color = DarkBackground,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(update.changelog, color = TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(10.dp))
+                    }
+
+                    if (isDownloadingUpdate) {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Text("Baixando atualização: ${(downloadProgress * 100).toInt()}%", fontSize = 12.sp, color = GreenPrimary)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        LinearProgressIndicator(
+                            progress = { downloadProgress },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = GreenPrimary
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                if (!isDownloadingUpdate) {
+                    Button(
+                        onClick = {
+                            isDownloadingUpdate = true
+                            scope.launch {
+                                AppUpdateManager.downloadAndInstallApk(
+                                    context = context,
+                                    apkUrl = update.apkUrl,
+                                    onProgress = { p -> downloadProgress = p },
+                                    onError = { err ->
+                                        isDownloadingUpdate = false
+                                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                                    }
+                                )
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary)
+                    ) {
+                        Text("Baixar e Atualizar Agora", color = DarkBackground, fontWeight = FontWeight.Bold)
+                    }
+                }
+            },
+            dismissButton = {
+                if (!isDownloadingUpdate) {
+                    TextButton(onClick = { availableUpdate = null }) {
+                        Text("Depois", color = TextSecondary)
+                    }
                 }
             },
             containerColor = DarkSurface
