@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Miix Agendador WP</string>
+    <string name="accessibility_service_label">Miix Agendador WP - Automação WhatsApp</string>
+    <string name="accessibility_service_description">Permite que o Miix Agendador WP envie automaticamente as mensagens agendadas no WhatsApp e WhatsApp Business sem intervenção manual.</string>
+</resources>
