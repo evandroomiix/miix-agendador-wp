@@ -69,6 +69,7 @@ fun HomeScreen(
     var showPlatformSelectorDialog by remember { mutableStateOf(false) }
     var showHolidaysDialog by remember { mutableStateOf(false) }
     var viewingLogMessage by remember { mutableStateOf<ScheduledMessage?>(null) }
+    var viewingDetailMessage by remember { mutableStateOf<ScheduledMessage?>(null) }
 
     // Atualização do Aplicativo (In-App Updater)
     var isCheckingUpdate by remember { mutableStateOf(false) }
@@ -402,6 +403,7 @@ fun HomeScreen(
                         MessageItemCard(
                             message = message,
                             tabIndex = selectedTabIndex,
+                            onClick = { viewingDetailMessage = message },
                             onEdit = { onEditMessage(message.id) },
                             onSoftDelete = {
                                 scope.launch {
@@ -718,12 +720,512 @@ fun HomeScreen(
             containerColor = DarkSurface
         )
     }
+
+    // 🌟 DIÁLOGO COMPLETO DE DETALHES DO AGENDAMENTO (CLIQUE NO CARD)
+    viewingDetailMessage?.let { detailMsg ->
+        var showDetailMenu by remember { mutableStateOf(false) }
+
+        val calNow = Calendar.getInstance()
+        val calMsg = Calendar.getInstance().apply { timeInMillis = detailMsg.scheduledTimeMillis }
+
+        val dayOfWeekFormat = remember { SimpleDateFormat("EEEE", Locale("pt", "BR")) }
+        val dateFormat = remember { SimpleDateFormat("dd/MM/yyyy", Locale("pt", "BR")) }
+        val timeFormat = remember { SimpleDateFormat("HH:mm", Locale("pt", "BR")) }
+
+        val dayOfWeek = remember(detailMsg.scheduledTimeMillis) {
+            dayOfWeekFormat.format(Date(detailMsg.scheduledTimeMillis)).replaceFirstChar { it.uppercase() }
+        }
+        val dateStr = remember(detailMsg.scheduledTimeMillis) {
+            dateFormat.format(Date(detailMsg.scheduledTimeMillis))
+        }
+        val timeStr = remember(detailMsg.scheduledTimeMillis) {
+            timeFormat.format(Date(detailMsg.scheduledTimeMillis))
+        }
+
+        val relativeLabel = remember(detailMsg.scheduledTimeMillis) {
+            val isSameYear = calNow.get(Calendar.YEAR) == calMsg.get(Calendar.YEAR)
+            val dayDiff = calMsg.get(Calendar.DAY_OF_YEAR) - calNow.get(Calendar.DAY_OF_YEAR)
+            if (isSameYear && dayDiff == 0) {
+                "Hoje"
+            } else if (isSameYear && dayDiff == 1) {
+                "Amanhã"
+            } else if (isSameYear && dayDiff == -1) {
+                "Ontem"
+            } else if (calMsg.after(calNow)) {
+                "Agendado no Futuro"
+            } else {
+                "Data Passada"
+            }
+        }
+
+        val recipientsList = remember(detailMsg.recipientsJson) {
+            val list = mutableListOf<Pair<String, String>>()
+            try {
+                val arr = JSONArray(detailMsg.recipientsJson)
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    val phone = obj.optString("phone", "")
+                    val name = obj.optString("name", phone)
+                    list.add(Pair(phone, name))
+                }
+            } catch (_: Exception) {}
+            list
+        }
+
+        val pollOptionsList = remember(detailMsg.pollOptionsJson) {
+            val list = mutableListOf<String>()
+            try {
+                val arr = JSONArray(detailMsg.pollOptionsJson)
+                for (i in 0 until arr.length()) {
+                    list.add(arr.getString(i))
+                }
+            } catch (_: Exception) {}
+            list
+        }
+
+        AlertDialog(
+            onDismissRequest = { viewingDetailMessage = null },
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Detalhes",
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary,
+                        fontSize = 18.sp
+                    )
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // ✏️ LÁPIS PARA EDIÇÃO
+                        IconButton(onClick = {
+                            val id = detailMsg.id
+                            viewingDetailMessage = null
+                            onEditMessage(id)
+                        }) {
+                            Icon(Icons.Default.Edit, contentDescription = "Editar", tint = GreenPrimary)
+                        }
+
+                        // 🗑️ LIXEIRA PARA EXCLUIR
+                        IconButton(onClick = {
+                            val id = detailMsg.id
+                            viewingDetailMessage = null
+                            scope.launch {
+                                if (selectedTabIndex == 4) {
+                                    database.scheduledMessageDao().deleteMessage(detailMsg)
+                                    Toast.makeText(context, "Excluído permanentemente!", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    database.scheduledMessageDao().softDelete(id)
+                                    SchedulerManager.cancelMessage(context, id)
+                                    Toast.makeText(context, "Movido para a Lixeira!", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Excluir", tint = AccentRed)
+                        }
+
+                        // 3 PONTINHOS (MENU)
+                        Box {
+                            IconButton(onClick = { showDetailMenu = true }) {
+                                Icon(Icons.Default.MoreVert, contentDescription = "Mais opções", tint = TextPrimary)
+                            }
+
+                            DropdownMenu(
+                                expanded = showDetailMenu,
+                                onDismissRequest = { showDetailMenu = false },
+                                modifier = Modifier.background(DarkSurface)
+                            ) {
+                                // 1. Enviar Agora
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.Send, contentDescription = null, tint = GreenPrimary, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("Enviar Agora", color = TextPrimary)
+                                        }
+                                    },
+                                    onClick = {
+                                        showDetailMenu = false
+                                        viewingDetailMessage = null
+                                        ExecutionForegroundService.startExecution(context, detailMsg.id)
+                                        Toast.makeText(context, "Iniciando envio agora...", Toast.LENGTH_SHORT).show()
+                                    }
+                                )
+
+                                // 2. Duplicar
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.ContentCopy, contentDescription = null, tint = AccentBlue, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("Duplicar", color = TextPrimary)
+                                        }
+                                    },
+                                    onClick = {
+                                        showDetailMenu = false
+                                        viewingDetailMessage = null
+                                        scope.launch {
+                                            val copy = detailMsg.copy(
+                                                id = 0,
+                                                title = "${detailMsg.title} (Cópia)",
+                                                scheduledTimeMillis = detailMsg.scheduledTimeMillis + 3600000L,
+                                                status = MessageStatus.DRAFT,
+                                                lastExecutionLog = ""
+                                            )
+                                            database.scheduledMessageDao().insertMessage(copy)
+                                            Toast.makeText(context, "📑 Duplicado como Rascunho!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                )
+
+                                // 3. Pausa / Retomar
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(if (detailMsg.status == MessageStatus.PAUSED) Icons.Default.PlayArrow else Icons.Default.Pause, contentDescription = null, tint = AccentOrange, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(if (detailMsg.status == MessageStatus.PAUSED) "Retomar Agendamento" else "Pausar Agendamento", color = TextPrimary)
+                                        }
+                                    },
+                                    onClick = {
+                                        showDetailMenu = false
+                                        viewingDetailMessage = null
+                                        scope.launch {
+                                            if (detailMsg.status == MessageStatus.PAUSED) {
+                                                database.scheduledMessageDao().resumeMessage(detailMsg.id)
+                                                SchedulerManager.scheduleMessage(context, detailMsg)
+                                                Toast.makeText(context, "▶️ Agendamento retomado!", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                database.scheduledMessageDao().pauseMessage(detailMsg.id)
+                                                SchedulerManager.cancelMessage(context, detailMsg.id)
+                                                Toast.makeText(context, "⏸️ Agendamento pausado!", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                )
+
+                                // 4. Enviando Logs
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text("Enviando Logs", color = TextPrimary)
+                                        }
+                                    },
+                                    onClick = {
+                                        showDetailMenu = false
+                                        viewingLogMessage = detailMsg
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            text = {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 480.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // 1. TÍTULO E STATUS
+                    item {
+                        Surface(
+                            color = DarkBackground,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    detailMsg.title,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp,
+                                    color = TextPrimary
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // Badge de Estado da Publicação
+                                    Surface(
+                                        color = when (detailMsg.status) {
+                                            MessageStatus.DONE -> GreenPrimary.copy(alpha = 0.2f)
+                                            MessageStatus.FAILED -> AccentRed.copy(alpha = 0.2f)
+                                            MessageStatus.PAUSED -> AccentOrange.copy(alpha = 0.2f)
+                                            MessageStatus.DRAFT -> TextSecondary.copy(alpha = 0.2f)
+                                            MessageStatus.DELETED -> AccentRed.copy(alpha = 0.3f)
+                                            else -> GreenPrimary.copy(alpha = 0.15f)
+                                        },
+                                        shape = RoundedCornerShape(4.dp)
+                                    ) {
+                                        Text(
+                                            when (detailMsg.status) {
+                                                MessageStatus.DONE -> "✅ Feito / Concluído"
+                                                MessageStatus.FAILED -> "❌ Erro / Falhado"
+                                                MessageStatus.PAUSED -> "⏸️ Pausado"
+                                                MessageStatus.DRAFT -> "📝 Rascunho"
+                                                MessageStatus.DELETED -> "🗑️ Excluído (Lixeira)"
+                                                else -> "⏳ Pendente"
+                                            },
+                                            color = when (detailMsg.status) {
+                                                MessageStatus.DONE -> GreenPrimary
+                                                MessageStatus.FAILED -> AccentRed
+                                                MessageStatus.PAUSED -> AccentOrange
+                                                MessageStatus.DRAFT -> TextSecondary
+                                                MessageStatus.DELETED -> AccentRed
+                                                else -> GreenPrimary
+                                            },
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+
+                                    // Badge da Plataforma
+                                    Surface(
+                                        color = when (detailMsg.whatsAppType) {
+                                            WhatsAppType.WHATSAPP_BUSINESS -> GreenSecondary
+                                            WhatsAppType.WHATSAPP_MOD -> Color(0xFF00897B)
+                                            WhatsAppType.INSTAGRAM -> Color(0xFFE1306C)
+                                            WhatsAppType.INSTAGRAM_MOD -> Color(0xFFC13584)
+                                            WhatsAppType.FACEBOOK -> Color(0xFF1877F2)
+                                            WhatsAppType.META_BUSINESS -> Color(0xFF0064E0)
+                                            else -> GreenDark
+                                        },
+                                        shape = RoundedCornerShape(4.dp)
+                                    ) {
+                                        Text(
+                                            when (detailMsg.whatsAppType) {
+                                                WhatsAppType.WHATSAPP_BUSINESS -> "WP Business"
+                                                WhatsAppType.WHATSAPP_MOD -> "WP Mod"
+                                                WhatsAppType.INSTAGRAM -> "Instagram"
+                                                WhatsAppType.INSTAGRAM_MOD -> "Insta Mod"
+                                                WhatsAppType.FACEBOOK -> "Facebook"
+                                                WhatsAppType.META_BUSINESS -> "Meta Suite"
+                                                else -> "WhatsApp"
+                                            },
+                                            color = Color.White,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 2. DATA, HORÁRIO E DIA DA SEMANA
+                    item {
+                        Surface(
+                            color = DarkBackground,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("📅 Data e Horário Programado", fontWeight = FontWeight.Bold, color = GreenPrimary, fontSize = 12.sp)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "$dayOfWeek, $dateStr às $timeStr",
+                                    color = TextPrimary,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 14.sp
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    "Status: $relativeLabel",
+                                    color = TextSecondary,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
+
+                    // 3. PARA QUEM FOI (DESTINATÁRIOS)
+                    item {
+                        Surface(
+                            color = DarkBackground,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("👥 Destinatários (Para Quem)", fontWeight = FontWeight.Bold, color = GreenPrimary, fontSize = 12.sp)
+                                    Text(
+                                        when (detailMsg.scheduleType) {
+                                            ScheduleType.STATUS -> "Status / Stories"
+                                            ScheduleType.POLL -> "Enquete (${recipientsList.size})"
+                                            ScheduleType.BROADCAST_LIST -> "Lista Transmissão (${recipientsList.size})"
+                                            ScheduleType.ENGAGEMENT_CAMPAIGN -> "Campanha (${recipientsList.size})"
+                                            else -> "Total: ${recipientsList.size}"
+                                        },
+                                        color = TextSecondary,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                if (detailMsg.scheduleType == ScheduleType.STATUS) {
+                                    Text("📱 Postagem programada no Status / Stories", color = TextPrimary, fontSize = 13.sp)
+                                } else if (recipientsList.isEmpty()) {
+                                    Text("Nenhum contato específico selecionado", color = TextSecondary, fontSize = 12.sp)
+                                } else {
+                                    recipientsList.take(15).forEach { (phone, name) ->
+                                        Row(
+                                            modifier = Modifier.padding(vertical = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(Icons.Default.Person, contentDescription = null, tint = GreenPrimary, modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(if (name.isNotBlank() && name != phone) "$name ($phone)" else phone, color = TextPrimary, fontSize = 12.sp)
+                                        }
+                                    }
+                                    if (recipientsList.size > 15) {
+                                        Text("+ ${recipientsList.size - 15} outros destinatários...", color = TextSecondary, fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 4. MENSAGEM / ENQUETE
+                    item {
+                        Surface(
+                            color = DarkBackground,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("💬 Conteúdo da Mensagem", fontWeight = FontWeight.Bold, color = GreenPrimary, fontSize = 12.sp)
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                if (detailMsg.scheduleType == ScheduleType.POLL) {
+                                    Text("📊 Pergunta: ${detailMsg.pollQuestion}", fontWeight = FontWeight.SemiBold, color = TextPrimary, fontSize = 13.sp)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    pollOptionsList.forEachIndexed { idx, opt ->
+                                        Text("${idx + 1}. $opt", color = TextSecondary, fontSize = 12.sp)
+                                    }
+                                } else {
+                                    Text(
+                                        detailMsg.text.ifBlank { "(Sem texto digitado)" },
+                                        color = TextPrimary,
+                                        fontSize = 13.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 5. ANEXO (CASO TENHA)
+                    item {
+                        Surface(
+                            color = DarkBackground,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("📎 Anexo", fontWeight = FontWeight.Bold, color = GreenPrimary, fontSize = 12.sp)
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                if (detailMsg.attachmentType != AttachmentType.NONE) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            when (detailMsg.attachmentType) {
+                                                AttachmentType.IMAGE_VIDEO -> Icons.Default.PhotoLibrary
+                                                AttachmentType.DOCUMENT -> Icons.Default.Description
+                                                AttachmentType.AUDIO -> Icons.Default.AudioFile
+                                                AttachmentType.VOICE_NOTE -> Icons.Default.Mic
+                                                else -> Icons.Default.AttachFile
+                                            },
+                                            contentDescription = null,
+                                            tint = GreenPrimary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            detailMsg.attachmentName ?: "Arquivo anexado",
+                                            color = TextPrimary,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                } else {
+                                    Text("Nenhum anexo adicionado", color = TextSecondary, fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+
+                    // 6. CONFIGURAÇÕES PRO MAX
+                    item {
+                        Surface(
+                            color = DarkBackground,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("⚙️ Configurações Avançadas", fontWeight = FontWeight.Bold, color = GreenPrimary, fontSize = 12.sp)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text("• Perguntar antes de enviar: ${if (detailMsg.askBeforeSending) "Sim" else "Não"}", color = TextSecondary, fontSize = 12.sp)
+                                Text("• Sincronizar Google Agenda: ${if (detailMsg.calendarSync) "Sim" else "Não"}", color = TextSecondary, fontSize = 12.sp)
+                                Text("• Repetição: ${when (detailMsg.repeatMode) {
+                                    RepeatMode.DAILY -> "Diariamente"
+                                    RepeatMode.WEEKDAYS -> "Dias úteis (Seg-Sex)"
+                                    RepeatMode.WEEKLY -> "Semanalmente"
+                                    RepeatMode.MONTHLY -> "Mensalmente"
+                                    else -> "Nenhuma"
+                                }}", color = TextSecondary, fontSize = 12.sp)
+                                Text("• Intervalo anti-ban entre contatos: ${detailMsg.delayBetweenContactsSeconds}s", color = TextSecondary, fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    // 7. LOGS DE EXECUÇÃO
+                    if (detailMsg.lastExecutionLog.isNotBlank()) {
+                        item {
+                            Surface(
+                                color = DarkBackground,
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text("📋 Logs do Envio", fontWeight = FontWeight.Bold, color = if (detailMsg.status == MessageStatus.FAILED) AccentRed else GreenPrimary, fontSize = 12.sp)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(detailMsg.lastExecutionLog, color = TextPrimary, fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { viewingDetailMessage = null },
+                    colors = ButtonDefaults.buttonColors(containerColor = GreenPrimary)
+                ) {
+                    Text("Fechar", color = DarkBackground, fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = DarkSurface
+        )
+    }
 }
 
 @Composable
 fun MessageItemCard(
     message: ScheduledMessage,
     tabIndex: Int,
+    onClick: () -> Unit,
     onEdit: () -> Unit,
     onSoftDelete: () -> Unit,
     onRestore: () -> Unit,
@@ -751,7 +1253,9 @@ fun MessageItemCard(
     Card(
         colors = CardDefaults.cardColors(containerColor = DarkCard),
         shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             // Linha do Título, Badges da Plataforma e Menu 3 Pontinhos

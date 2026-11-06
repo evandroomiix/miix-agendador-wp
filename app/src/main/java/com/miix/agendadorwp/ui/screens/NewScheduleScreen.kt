@@ -10,6 +10,7 @@ import android.os.Build
 import android.provider.ContactsContract
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -102,9 +103,15 @@ fun NewScheduleScreen(
 
     // Activity Launchers para Arquivos
     val mediaPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {}
             attachmentUri = uri
             attachmentType = AttachmentType.IMAGE_VIDEO
             attachmentName = uri.lastPathSegment ?: "Imagem / Vídeo"
@@ -128,17 +135,6 @@ fun NewScheduleScreen(
             attachmentUri = uri
             attachmentType = AttachmentType.AUDIO
             attachmentName = uri.lastPathSegment ?: "Áudio"
-        }
-    }
-
-    // 🌟 LAUNCHERS DE PERMISSÃO EM TEMPO DE EXECUÇÃO
-    val mediaPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { perms ->
-        if (perms.values.any { it }) {
-            mediaPickerLauncher.launch("image/*,video/*")
-        } else {
-            Toast.makeText(context, "Permissão de mídia necessária para fotos/vídeos.", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -560,19 +556,15 @@ fun NewScheduleScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            // 📷 IMAGEM OU VÍDEO (Com pedido de permissão se necessário)
+                            // 📷 IMAGEM OU VÍDEO (Photo Picker Nativo Moderno)
                             OutlinedButton(
                                 onClick = {
-                                    val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                        arrayOf(android.Manifest.permission.READ_MEDIA_IMAGES, android.Manifest.permission.READ_MEDIA_VIDEO)
-                                    } else {
-                                        arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)
-                                    }
-                                    val granted = perms.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
-                                    if (granted) {
-                                        mediaPickerLauncher.launch("image/*,video/*")
-                                    } else {
-                                        mediaPermissionLauncher.launch(perms)
+                                    try {
+                                        mediaPickerLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+                                        )
+                                    } catch (e: Exception) {
+                                        docPickerLauncher.launch("*/*")
                                     }
                                 },
                                 modifier = Modifier.weight(1f),
